@@ -26,7 +26,7 @@ from rl.train_env import (NeTrainSimEnv, TRAINS_FILE, TRAINS_FILE_RETURN,
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_DIR = os.path.join(_REPO, "results")
-DEFAULT_NOTCHES = [2, 3, 4, 5, 6, 8]
+DEFAULT_NOTCHES = list(range(1, 9))
 
 
 def baselines_path(trip: str) -> str:
