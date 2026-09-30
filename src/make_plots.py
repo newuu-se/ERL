@@ -310,8 +310,8 @@ def fig_energy_time_tradeoff():
 
     fig, axes = plt.subplots(1, len(trips), figsize=(COL2, 2.9))
     axes = np.atleast_1d(axes)
-    titles = {"forward": "Toshkent $\\rightarrow$ Ho'jakent (net $+347$ m)",
-              "return":  "Ho'jakent $\\rightarrow$ Toshkent (net $-347$ m)"}
+titles = {"forward": "Toshkent $\\rightarrow$ Ho'jakent (net $+181$ m)",
+              "return":  "Ho'jakent $\\rightarrow$ Toshkent (net $-181$ m)"}
 
     for ax, (trip, base), lab in zip(axes, trips, "ab"):
         order = np.argsort(base["steps"])
