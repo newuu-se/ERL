@@ -225,7 +225,8 @@ def main():
                              "or checkpoints/return/ with --return-trip)")
     parser.add_argument("--output", default=None,
                         help="Output CSV path (default: results/notch_profile.csv, "
-                             "or results/return/notch_profile.csv with --return-trip)")
+                             "results/notch_profile_stochastic.csv with --stochastic, "
+                             "or the same names under results/return/ with --return-trip)")
     parser.add_argument("--stochastic", action="store_true",
                         help="Sample actions from the policy instead of argmax "
                              "(representative for a high-entropy policy)")
@@ -239,7 +240,11 @@ def main():
     trains_file    = TRAINS_FILE_RETURN    if args.return_trip else TRAINS_FILE
 
     checkpoint = args.checkpoint or find_latest_checkpoint(checkpoint_dir)
-    output_path = args.output or os.path.join(output_dir, "notch_profile.csv")
+    # make_plots.load_profile() reads notch_profile_stochastic.csv, so the
+    # --stochastic run must write that exact name or the figure is skipped.
+    profile_name = ("notch_profile_stochastic.csv" if args.stochastic
+                    else "notch_profile.csv")
+    output_path = args.output or os.path.join(output_dir, profile_name)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     print(f"Trip: {'B→A return' if args.return_trip else 'A→B forward'}")

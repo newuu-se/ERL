@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -167,8 +167,8 @@ Automatic Trains Definition
 Loco field order: `Count, Power(kW), TransmissionEff, NoOfAxles, AirDragCoeff, FrontalArea(m²), Length(m), GrossWeight(t), Type`
 Car field order:  `Count, NoOfAxles, AirDragCoeff, FrontalArea(m²), Length(m), GrossWeight(t), TareWeight(t), Type`
 Current config: ER9E EMU — 3 locos (1213 kW, 60 t, type 1 = electric) + 3 cars
-(2×78 t + 37 t) = 373 t. `trainsFile_rl.dat` runs path 1→1500; `train_return.dat` runs
-1500→1. Locomotive default max speed 33.33 m/s; route speed limits are the binding constraint.
+(2×78 t + 37 t) = 373 t. `trainsFile_rl.dat` runs path 1→1503; `train_return.dat` runs
+1503→1. Locomotive default max speed 33.33 m/s; route speed limits are the binding constraint.
 
 ## Architecture
 
@@ -244,8 +244,8 @@ NOTE: energy is charged from *virtual* tractive power `(m·a + R)·v` — with i
 `time_frac` = step/DEADLINE_STEPS, `behind_frac` = fraction of route behind the
 deadline pace. These make the clock visible — the pace penalty depends on the
 step counter, so without them the reward would be non-Markov in the observation.
-Normalization denominators (`_GRADE_MAX=4.5`, `_ENERGY_MAX=1.5`, …) are
-calibrated to the CLEAN v2 data; recheck them whenever physics/data change.
+Normalization denominators (`_GRADE_MAX=8.5`, `_ENERGY_MAX=1.5`, …) are
+calibrated to the `real_data` route; recheck them whenever physics/data change.
 
 **Action space:** `Discrete(9)` — notch 0–8, held for CONTROL_INTERVAL=15 sim-seconds
 per decision (action repeat; credit assignment was intractable at 1 s decisions).
@@ -262,14 +262,14 @@ plus, once per decision: -W_SMOOTH * |Δnotch|       # smoothness         (0.15)
 ```
 The per-step pace penalty (not a terminal late fee) is what stops the
 crawl-at-notch-1 failure mode; zero penalty when on/ahead of schedule preserves
-the freedom to coast. Eco target = slowest on-schedule constant notch ≈ n3
-(789 kWh / 6,442 s on clean data); the agent should beat it by modulating with
-grade/speed zone.
+the freedom to coast. Eco target = the slowest on-schedule constant notch: forward n3
+(707 kWh / 8,653 s), return n2 (356 kWh / 8,843 s); the agent should beat it by
+modulating with grade/speed zone.
 
 **Episode boundaries:**
 - `terminated=True`: simulator reports the train reached its destination, or
   `position_m >= TOTAL_ROUTE_LENGTH_M` (75,064.00 m — real_data)
-- `truncated=True`: `_step_count >= MAX_STEPS` (12,000) without arriving
+- `truncated=True`: `_step_count >= MAX_STEPS` (18,000) without arriving
 
 ### Tianshou PPO (`rl/train.py`) — tianshou 0.5.1 API
 
@@ -341,12 +341,19 @@ Rebuild after C++ changes: `cd NeTrainSim-adjusted && ./build-linux.sh`
 - SUPERSEDED (`data/netrainsim_v2/`, route files only): 74.89 km, 1500/1499, four speed
   zones, net +346.6 m, grades −2.7…+4.5 % after DEM-spike cleaning.
 - Trip-time bounds (ACTIVE real_data): theoretical floor ≈ **7,100 s** (Σ length/limit; a
-  kinematic pass with EMU accel/brake limits agrees at ~7,050 s). `DEADLINE_STEPS = 9,200`
-  is PROVISIONAL — derived from that floor, not measured. **Re-set it from
-  `rl/run_baselines.py` before trusting any training run**: it must exceed the fastest
-  constant notch, else every episode is late by construction and the pace penalty carries
-  no signal. `_ENERGY_MAX` likewise needs setting from the reported `maxE/step`.
-- Constant-notch frontier for real_data: **NOT YET MEASURED**.
+  kinematic pass with EMU accel/brake limits agrees at ~7,050 s).
+- Constant-notch frontier for real_data (MEASURED — `python rl/run_baselines.py`).
+  Forward `notch: kWh / s` → n1 572 / never (18,000 s, 82.8 %), n2 622 / 10,139,
+  n3 707 / 8,653, n4 762 / 8,254, n5 791 / 8,100, n6 802 / 8,054, n7 825 / 8,032,
+  n8 840 / 8,015. Return → n1 182 / 10,822, n2 356 / 8,843, n3 460 / 8,294,
+  n4 491 / 8,142, n5 510 / 8,093, n6 520 / 8,074, n7 535 / 8,069, n8 536 / 8,064.
+- `DEADLINE_STEPS = 9,200` **passes its required check**: the fastest constant notch is
+  8,015 s forward and 8,064 s return, so no episode is late by construction and the pace
+  penalty carries real signal. `_ENERGY_MAX = 1.5` likewise clears the largest observed
+  `maxE/step` (1.431 forward n8, 1.386 return n8). Both are loose rather than tuned —
+  tightening the deadline toward the ~7,100 s floor remains a deliberate user decision
+  (README step 6). Note forward n2 (622 kWh) is LATE at 10,139 s, so the gap the agent must
+  close is: land under 707 kWh while still arriving by 9,200 s.
 - (Superseded v2 route, for reference only — does NOT transfer: floor ≈ 5,025 s, n8=5,602 s/
   862 kWh, n3=6,442/789, n2=8,492/758, deadline was 6,500 s, eco target n3.)
 - The simulator hard-caps speed at each link's freeFlowSpeed, so over-speeding is rare

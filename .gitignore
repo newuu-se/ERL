@@ -219,3 +219,6 @@ __marimo__/
 # Training artifacts (models + logs are large/regenerable; release via Zenodo, not git)
 checkpoints/
 logs/
+# Root results/ only (make_plots/evaluate output). Anchored so the upstream
+# NeTrainSim-adjusted/results/ files, which are committed, are unaffected.
+/results/

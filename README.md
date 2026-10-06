@@ -99,7 +99,7 @@ python rl/run_baselines.py                  # → results/baselines_forward.json
 python rl/run_baselines.py --return-trip    # → results/baselines_return.json
 ```
 
-This drives the train at each fixed notch (2,3,4,5,6,8) and records trip time and energy.
+This drives the train at each fixed notch 1–8 and records trip time and energy.
 It is the frontier the learned policy has to beat, and every later figure references it.
 
 ## 6. ⏸️ Set the deadline from those numbers — do not skip
@@ -112,8 +112,13 @@ Open `rl/train_env.py` and set two constants from the baseline output:
   not, every episode is late by construction, the pace penalty is permanently active, and
   the agent gets no learnable schedule signal — training will appear to run and teach
   nothing.
+  *(Measured on `real_data`: fastest constant notch is 8,015 s forward / 8,064 s return,
+  so `9_200` clears the check — see the frontier table in `AGENTS.md`. It is loose, not
+  tuned; lowering it toward the ~7,100 s floor is a real choice, and the harder deadline
+  you set the closer the task comes to the physical limit.)*
 - **`_ENERGY_MAX`** — set to a little above the largest `maxE/step` the baseline reports.
   Too low and every heavy-power moment saturates to the same observation value.
+  *(Measured: 1.431 forward n8, 1.386 return n8 — so the current `1.5` stands.)*
 
 ## 7. Train
 
