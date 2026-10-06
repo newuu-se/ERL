@@ -169,10 +169,12 @@ def plot(results: dict):
     fig.suptitle("Closed-form return of constant-notch policies: the eco notch is "
                  "reward-optimal across the whole sensible $w_P$ range", fontsize=11.5)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    for d in (os.path.join(_REPO, "results", "plots"),
-              os.path.join(_REPO, "latex", "figures")):
-        if os.path.isdir(d):
-            fig.savefig(os.path.join(d, "fig_reward_theory.png"), dpi=200, bbox_inches="tight")
+    primary = os.path.join(_REPO, "results", "plots")
+    os.makedirs(primary, exist_ok=True)
+    fig.savefig(os.path.join(primary, "fig_reward_theory.png"), dpi=200, bbox_inches="tight")
+    paper = os.path.join(_REPO, "latex", "figures")
+    if os.path.isdir(paper):
+        fig.savefig(os.path.join(paper, "fig_reward_theory.png"), dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 

@@ -1,5 +1,5 @@
 """
-PPO training for the RETURN trip — Ho'jakent → Toshkent (path 1500→1,
+PPO training for the RETURN trip — Ho'jakent → Toshkent (path 1503→1,
 data/netrainsim_v2/train_return.dat).
 
 Identical pipeline/hyperparameters to rl/train.py (shared run_training); only
@@ -7,13 +7,13 @@ the trains file and the checkpoint directory differ:
   checkpoints → checkpoints/return/
   evaluation  → python rl/evaluate.py --return-trip   (→ results/return/)
 
-Trip facts (clean data, rl/run_baselines.py --return-trip, 2026-06-11):
-  Net elevation is DOWNHILL (−346.6 m), so the frontier sits far below the
+Trip facts (real_data, rl/run_baselines.py --return-trip):
+  Net elevation is DOWNHILL (−181.4 m), so the frontier sits well below the
   forward trip's:
-    n8=5,605 s/348.3 kWh, n6=5,641/335.8, n5=5,682/327.4, n4=5,768/317.7,
-    n3=5,950/293.9, n2=6,375/242.2, n1=7,681/170.1
-  With the shared DEADLINE_STEPS=6,500: n2 arrives on time, n1 does not →
-  eco target = constant n2 ≈ 242 kWh / 6,375 s.
+    n8=8,064 s/536.4 kWh, n7=8,069/535.3, n6=8,074/520.4, n5=8,093/509.8,
+    n4=8,142/491.5, n3=8,294/459.5, n2=8,843/355.6, n1=10,822/182.4
+  With the shared DEADLINE_STEPS=9,200: n2 arrives on time, n1 does not →
+  eco target = constant n2 ≈ 356 kWh / 8,843 s.
 
 Run:
     source venv/bin/activate
@@ -40,7 +40,7 @@ def main():
     run_training(
         make_env_fn=make_return_env,
         checkpoint_dir=CHECKPOINT_DIR_RETURN,
-        trip_label="B→A return (Ho'jakent→Toshkent, path 1500→1)",
+        trip_label="B→A return (Ho'jakent→Toshkent, path 1503→1)",
     )
 
 

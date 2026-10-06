@@ -161,7 +161,7 @@ class NeTrainSimEnv(gym.Env):
     def __init__(self, trains_file: str = TRAINS_FILE):
         super().__init__()
         # trains_file selects the trip: TRAINS_FILE (A→B) or TRAINS_FILE_RETURN
-        # (B→A, path 1500→1). Route length/links are identical either way.
+        # (B→A, path 1503→1). Route length/links are identical either way.
         self._trains_file = trains_file
         self._proc: subprocess.Popen | None = None
         self._out_queue: queue.Queue | None = None  # lines from the reader thread

@@ -171,8 +171,8 @@ def run_episode(policy: PPOPolicy, output_path: str, stochastic: bool = False,
         speed_mps  = float(state["speed_mps"])
 
         # Interpolate (x, y) at the train's current position along the path.
-        # load_path_coordinates() walks links in FORWARD (node 1→1500) order;
-        # on the return trip position_m counts from node 1500, so map it to the
+        # load_path_coordinates() walks links in FORWARD (node 1→1503) order;
+        # on the return trip position_m counts from node 1503, so map it to the
         # forward chainage first.
         route_pos = (route_len - position_m) if reverse else position_m
         x_m = float(np.interp(route_pos, cum_pos, xs))
