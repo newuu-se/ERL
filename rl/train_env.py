@@ -33,26 +33,82 @@ from gymnasium.spaces import Box, Discrete
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# ── External dependencies ───────────────────────────────────────────────────
+# This repo holds ONLY the RL layer. The simulator and the route data are
+# separate repositories, referenced here rather than vendored:
+#
+#   simulator   https://github.com/newuu-se/NeTrainSim-adjusted   (build it first)
+#   route data  https://github.com/newuu-se/train-routes          (private)
+#
+# Point the env vars at those checkouts, or place them beside this repo — the
+# defaults are the sibling layout (../NeTrainSim-adjusted, ../data).
+def _external_dir(env_var: str, default: str, what: str, hint: str) -> str:
+    """Resolve an external checkout: the env var first, else the sibling default."""
+    path = os.path.abspath(os.path.expanduser(os.environ.get(env_var) or default))
+    if not os.path.isdir(path):
+        raise FileNotFoundError(
+            f"{what} not found at: {path}\n"
+            f"{hint}\n"
+            f"Set {env_var} to the checkout, or place it at that path — this repo\n"
+            f"ships only the RL layer, not the simulator or the route data."
+        )
+    return path
+
 import platform as _platform
 _BUILD_DIR = "build-linux" if _platform.system() == "Linux" else "build-mac"
+# The simulator directory is NOT validated at import: only training/eval need the
+# binary, so plotting must keep working without a built simulator. _start_sim()
+# raises with build instructions if it is missing.
+_SIM_DIR = os.path.abspath(os.path.expanduser(
+    os.environ.get("NTS_SIMULATOR_DIR") or os.path.join(_REPO, os.pardir, "NeTrainSim-adjusted")
+))
 SIMULATOR_BIN = os.path.join(
-    _REPO, "NeTrainSim-adjusted", _BUILD_DIR,
-    "src", "NeTrainSimConsole", "NeTrainSim"
+    _SIM_DIR, _BUILD_DIR, "src", "NeTrainSimConsole", "NeTrainSim"
 )
-# ACTIVE DATASET: data/real_data/ — 1503 nodes / 1502 links, 75,064 m.
+
+_DATA_DIR = _external_dir(
+    "NTS_DATA_DIR", os.path.join(_REPO, os.pardir, "data"),
+    "The route-data checkout",
+    "It must provide the active route (real_data/) and the train definitions.",
+)
+
+def _data_file(name: str, *rels: str) -> str:
+    """Find a data file under the checkout, tolerating layout differences.
+
+    The data repo has moved these files around before, so probe the known
+    relative locations rather than hardcoding one layout.
+    """
+    for rel in rels:
+        p = os.path.join(_DATA_DIR, rel)
+        if os.path.isfile(p):
+            return p
+    raise FileNotFoundError(
+        f"{name} not found in the route-data checkout: {_DATA_DIR}\n"
+        f"Looked for:\n" + "\n".join(f"    {rel}" for rel in rels) + "\n"
+        f"Set NTS_DATA_DIR to the right checkout."
+    )
+
+# ACTIVE DATASET: real_data/ — 1503 nodes / 1502 links, 75,064 m.
 # Speed limits here are a near-continuous per-segment profile (960 distinct
 # values, 1.42-21.16 m/s), NOT the four regulatory zones of the older v2 data.
-NODES_FILE  = os.path.join(_REPO, "data", "real_data", "nodesFile_real_data.dat")
-LINKS_FILE  = os.path.join(_REPO, "data", "real_data", "linksFile_real_data.dat")
-# NOTE: the trains files still live under netrainsim_v2/ but their paths were
-# updated to 1→1503 / 1503→1, matching the real_data node count. They are
-# route-definition files for the ACTIVE data despite the folder name.
-TRAINS_FILE = os.path.join(_REPO, "data", "netrainsim_v2", "trainsFile_rl.dat")
+NODES_FILE = _data_file("nodesFile_real_data.dat",
+                        "real_data/nodesFile_real_data.dat", "nodesFile_real_data.dat")
+LINKS_FILE = _data_file("linksFile_real_data.dat",
+                        "real_data/linksFile_real_data.dat", "linksFile_real_data.dat")
+# NOTE: the trains files sit under netrainsim_v2/, but their paths were updated to
+# 1→1503 / 1503→1 to match the real_data node count. They are route-definition
+# files for the ACTIVE data despite the folder name; a stale copy still carrying a
+# 1→1500 path will not work against real_data.
+TRAINS_FILE = _data_file("trainsFile_rl.dat",
+                         "netrainsim_v2/trainsFile_rl.dat", "real_data/trainsFile_rl.dat",
+                         "trainsFile_rl.dat")
 # Return trip: identical consist, path reversed (1503→1). Forward net elevation
 # on real_data is +181.4 m, so the return is DOWNHILL by the same amount and its
 # constant-notch frontier differs — measure it with
 # `python rl/run_baselines.py --return-trip` (→ results/baselines_return.json).
-TRAINS_FILE_RETURN = os.path.join(_REPO, "data", "netrainsim_v2", "train_return.dat")
+TRAINS_FILE_RETURN = _data_file("train_return.dat",
+                                "netrainsim_v2/train_return.dat", "real_data/train_return.dat",
+                                "train_return.dat")
 
 TOTAL_ROUTE_LENGTH_M = 75_064.00  # sum of all 1502 link lengths (linksFile_real_data.dat)
 STATE_PREFIX = "NTS_JSON "
@@ -177,14 +233,19 @@ class NeTrainSimEnv(gym.Env):
         if not os.path.isfile(SIMULATOR_BIN):
             raise FileNotFoundError(
                 f"Simulator binary not found: {SIMULATOR_BIN}\n"
-                "Run: cd NeTrainSim-adjusted && ./build-linux.sh  (or build-mac.sh on macOS)"
+                f"The simulator lives in its own repo, not this one:\n"
+                f"    git clone https://github.com/newuu-se/NeTrainSim-adjusted\n"
+                f"    cd NeTrainSim-adjusted && ./{_BUILD_DIR}.sh\n"
+                f"or point NTS_SIMULATOR_DIR at an existing checkout."
             )
         for path in (NODES_FILE, LINKS_FILE, self._trains_file):
             if not os.path.isfile(path):
                 raise FileNotFoundError(
                     f"NeTrainSim input file not found: {path}\n"
-                    "All input files are checked in under data/netrainsim_v2/ "
-                    "and are used as-is — there is no generation step."
+                    f"The route data lives in its own repo, not this one. Set "
+                    f"NTS_DATA_DIR to that checkout, or place it at "
+                    f"{os.path.abspath(os.path.join(_REPO, os.pardir, 'data'))} "
+                    f"(it must provide real_data/ and netrainsim_v2/)."
                 )
 
     def reset(self, seed=None, options=None):

@@ -1,4 +1,4 @@
-# china-grant-rl-model
+# ERL — Efficient railway reinforcement learning
 
 Reinforcement learning for energy-optimal train driving. A **Tianshou PPO** agent sets the
 locomotive throttle (notch 0–8) along a real 75.1 km Uzbek rail route to minimise total
@@ -24,13 +24,26 @@ grades and speed limits, no regenerative braking.
 The simulator is a **separate process**. Python launches it, sends `{"notch": 6}`, and reads
 back a state line prefixed `NTS_JSON `. Training runs 8 such subprocesses in parallel.
 
+This repository is **only the RL layer**. The simulator and the route data live in their
+own repositories and are *referenced*, not vendored:
+
 | Component | Where |
 |---|---|
-| C++ simulator (forked, with `-I` interactive mode) | `NeTrainSim-adjusted/` |
-| Gymnasium environment + reward | `rl/train_env.py` |
-| PPO training | `rl/train.py` |
-| Route data (active) | `data/real_data/` |
-| Train consist + path | `data/netrainsim_v2/trainsFile_rl.dat` |
+| Gymnasium environment + reward | `rl/train_env.py` — this repo |
+| PPO training, evaluation, baselines, plots | `rl/` — this repo |
+| C++ simulator (forked, with `-I` interactive mode) | [`newuu-se/NeTrainSim-adjusted`](https://github.com/newuu-se/NeTrainSim-adjusted) |
+| Route data, nodes/links, train consists | [`newuu-se/train-routes`](https://github.com/newuu-se/train-routes) (private) |
+
+`rl/train_env.py` locates them through two environment variables, each falling back to a
+sibling checkout of this repo:
+
+| Variable | Default | Points at |
+|---|---|---|
+| `NTS_SIMULATOR_DIR` | `../NeTrainSim-adjusted` | the simulator checkout, built |
+| `NTS_DATA_DIR` | `../data` | the route-data checkout |
+
+If either is missing, importing `rl.train_env` fails immediately with the path it looked
+for and how to set it — the failure is never silent.
 
 ---
 
@@ -38,6 +51,30 @@ back a state line prefixed `NTS_JSON `. Training runs 8 such subprocesses in par
 
 Follow these in order. Steps 1–5 are setup and take about 20 minutes; step 6 is a
 decision point; step 7 is the long training run.
+
+## 0. Get the two companion repositories
+
+This repo contains only the RL code. The simulator and the route data are separate
+checkouts — clone them **beside** this repo, which is the layout the code expects by
+default:
+
+```bash
+git clone https://github.com/newuu-se/NeTrainSim-adjusted
+git clone https://github.com/newuu-se/train-routes data
+```
+
+Or keep them anywhere and point the environment variables at them:
+
+```bash
+export NTS_SIMULATOR_DIR=/path/to/NeTrainSim-adjusted
+export NTS_DATA_DIR=/path/to/train-routes
+```
+
+The data checkout must supply `nodesFile_real_data.dat`, `linksFile_real_data.dat`,
+`trainsFile_rl.dat` (forward path `1→1503`) and `train_return.dat` (reverse path
+`1503→1`). The env tolerates them being at the checkout root or under `real_data/` and
+`netrainsim_v2/`, but it cannot fix a stale file — a trains file still carrying a `1→1500`
+path belongs to the superseded route and will not work against `real_data`.
 
 ## 1. Install prerequisites
 
@@ -56,17 +93,22 @@ Linux: install `cmake`, `qt6-base-dev`, and a Python ≥ 3.10 through your packa
 ## 2. Build the C++ simulator
 
 ```bash
-cd NeTrainSim-adjusted
+cd "${NTS_SIMULATOR_DIR:-../NeTrainSim-adjusted}"
 ./build-mac.sh        # macOS
 # ./build-linux.sh    # Linux
-cd ..
+cd -
 ```
 
 Confirm the binary exists before going on — nothing else works without it:
 
 ```bash
-ls NeTrainSim-adjusted/build-mac/src/NeTrainSimConsole/NeTrainSim
+ls "${NTS_SIMULATOR_DIR:-../NeTrainSim-adjusted}"/build-mac/src/NeTrainSimConsole/NeTrainSim
 ```
+
+> **Build in place.** The binary embeds an absolute `rpath` to
+> `libNeTrainSimCore.dylib` at build time, so moving a build tree — or cloning one — makes
+> it abort at startup with `Library not loaded`. If you relocate the checkout, delete the
+> build directory and rebuild.
 
 ## 3. Create the Python environment
 
@@ -187,7 +229,7 @@ If panel (b) of the training figure does not fall and panel (d) does not rise to
 
 ## The route and the train
 
-Active dataset: **`data/real_data/`**
+Active dataset: **`real_data/`** in the route-data checkout (`$NTS_DATA_DIR`)
 
 - **Route:** 75.064 km, 1503 nodes / 1502 links (34–66 m per segment)
 - **Speed limits:** 1.42 – 21.16 m/s (5 – 76 km/h), **960 distinct values** — a
@@ -198,18 +240,17 @@ Active dataset: **`data/real_data/`**
 - **Electrification:** catenary on every link
 
 ```
-data/real_data/
+$NTS_DATA_DIR/
   nodesFile_real_data.dat     1503 nodes (x, y in metres), terminals at 1 and 1503
   linksFile_real_data.dat     1502 links  ← training reads this
 
-data/netrainsim_v2/
   trainsFile_rl.dat           consist + forward path (node 1 → 1503)
   train_return.dat            consist + return path  (node 1503 → 1)
 ```
 
-> The two trains files still sit under `netrainsim_v2/` for historical reasons, but their
-> paths were updated to `1→1503` and they belong to the **active** dataset. The other
-> files in that folder are the superseded route and are not read by anything.
+> The two trains files are often kept under a `netrainsim_v2/` folder for historical
+> reasons; the env looks in both places. Their paths were updated to `1→1503`, so they
+> belong to the **active** dataset despite the folder name.
 
 There is no data-generation step — the `.dat` files are the inputs, used as-is.
 
@@ -247,6 +288,12 @@ Three design choices carry most of the weight, each learned the hard way:
 
 Actions repeat for **15 simulated seconds**, cutting decisions per episode roughly 15-fold
 and making credit assignment tractable.
+
+`rl/reward_theory.py` checks the pace weight analytically rather than by trial: for a
+constant-notch policy the discounted return is linear in `w_P`, and the eco notch becomes
+reward-optimal above `w_P* = 0.44` on the forward trip and `0.57` on the return trip. The
+chosen `w_P = 2` therefore sits well inside the regime where the reward's optimum is the
+operating point we actually want.
 
 ---
 
@@ -298,4 +345,4 @@ statistics have been removed (see git history for `rl/run_campaign.py`,
 5. **`DEADLINE_STEPS` must exceed the fastest constant notch.** Otherwise every episode is
    late and the schedule term teaches nothing.
 
-`CLAUDE.md` holds the deeper architecture reference.
+`AGENTS.md` holds the deeper architecture reference.

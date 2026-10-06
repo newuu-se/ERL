@@ -1,13 +1,13 @@
 """
 Closed-form reward analysis of constant-notch policies — the theoretical
-justification for the reward coefficients (addresses reviewer comment #1).
+justification for the reward coefficients.
 
 A constant-notch policy ignores the reward, so its trajectory x_t, and hence its
 episode return under Eq. (reward), is fixed and computable. Writing the return of
 constant notch n as a function of the pace weight w_P:
 
-    R(n; w_P) = -W_ENERGY * E(n)            (measured total energy)
-                - w_P     * Sigma_beta(n)   (integrated behind-schedule fraction)
+    R(n; w_P) = -W_ENERGY * E(n)            (total energy, gamma-discounted)
+                - w_P     * Sigma_beta(n)   (behind-schedule fraction, discounted)
                 - W_OVERSPEED * OS(n)        (~0, the sim caps speed)
                 + ARRIVAL_BONUS  if the train reaches the terminus
                 - TIMEOUT_PENALTY otherwise
@@ -20,8 +20,13 @@ before any training, the coefficient range for which the reward's optimum is the
 operating point we actually want.
 
 We log each constant notch's per-second trajectory through the interactive
-simulator (one sim-second per step, no action repeat) and reconstruct the return
-with the exact env reward constants.
+simulator and reconstruct the return with the exact env reward constants at the
+resolution PPO actually sees: per-second components are summed into
+CONTROL_INTERVAL-second decisions and each decision is weighted by gamma**k
+(DISCOUNT, read from rl.train so the two cannot drift). A constant-notch policy
+has no notch changes, so the smoothness term is identically zero. Aggregating and
+discounting this way matters: PPO sees one discounted return per decision, so an
+undiscounted per-second sum would report a w_P* that is not the return it optimises.
 
 Usage:
     python rl/reward_theory.py            # both trips → results/theory/ + figure
@@ -34,15 +39,16 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from rl.train import DISCOUNT
 from rl.train_env import (
     NeTrainSimEnv, TRAINS_FILE, TRAINS_FILE_RETURN,
-    TOTAL_ROUTE_LENGTH_M, DEADLINE_STEPS,
+    TOTAL_ROUTE_LENGTH_M, DEADLINE_STEPS, CONTROL_INTERVAL,
     W_ENERGY, W_OVERSPEED, ARRIVAL_BONUS, TIMEOUT_PENALTY,
 )
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTDIR = os.path.join(_REPO, "results", "theory")
-NOTCHES = [1, 2, 3, 4, 5, 6, 8]   # 0 does not move; 7 omitted to match the baseline table
+NOTCHES = list(range(1, 9))       # 0 does not move (full adhesion at standstill)
 
 
 def log_constant_notch(notch: int, trains_file: str) -> dict:
@@ -53,6 +59,15 @@ def log_constant_notch(notch: int, trains_file: str) -> dict:
     sum_E = float(env._cum_energy_kwh)        # bootstrap step-0 energy
     sum_beta = 0.0
     sum_overspeed = 0.0
+
+    # The same totals again, but bucketed into CONTROL_INTERVAL-second PPO
+    # decisions and weighted by gamma**k — this is the return PPO maximises.
+    disc_E = disc_beta = disc_overspeed = 0.0
+    disc = 1.0                                # gamma**k for the current decision
+    disc_terminal = 1.0                       # weight of the arrival/timeout term
+    acc_E = acc_beta = acc_overspeed = 0.0
+    secs_in_decision = 0
+
     terminated = truncated = False
     while not (terminated or truncated):
         # Call the 1-second core directly to get per-second resolution (step()
@@ -61,25 +76,46 @@ def log_constant_notch(notch: int, trains_file: str) -> dict:
         st = env._last_state
         pos = float(st["position_m"])
         target = (env._step_count / DEADLINE_STEPS) * TOTAL_ROUTE_LENGTH_M
-        sum_beta += max(0.0, target - pos) / TOTAL_ROUTE_LENGTH_M
-        sum_overspeed += max(0.0, float(st["speed_mps"]) - float(st["link_max_speed_mps"]))
+        beta_t = max(0.0, target - pos) / TOTAL_ROUTE_LENGTH_M
+        os_t = max(0.0, float(st["speed_mps"]) - float(st["link_max_speed_mps"]))
         sum_E += e_t
+        sum_beta += beta_t
+        sum_overspeed += os_t
+        acc_E += e_t
+        acc_beta += beta_t
+        acc_overspeed += os_t
+        secs_in_decision += 1
+        # A decision ends every CONTROL_INTERVAL seconds, or when the episode
+        # ends mid-decision (the terminal step still counts as a decision).
+        if secs_in_decision == CONTROL_INTERVAL or terminated or truncated:
+            disc_E += disc * acc_E
+            disc_beta += disc * acc_beta
+            disc_overspeed += disc * acc_overspeed
+            disc_terminal = disc
+            disc *= DISCOUNT
+            acc_E = acc_beta = acc_overspeed = 0.0
+            secs_in_decision = 0
     steps = env._step_count
     env.close()
     return {
         "notch": notch, "steps": steps, "energy_kwh": round(sum_E, 3),
         "sum_beta": round(sum_beta, 4), "sum_overspeed": round(sum_overspeed, 4),
+        "disc_energy_kwh": round(disc_E, 3),
+        "disc_sum_beta": round(disc_beta, 4),
+        "disc_sum_overspeed": round(disc_overspeed, 4),
+        "disc_terminal": round(disc_terminal, 6),
         "arrived": bool(terminated),
         "on_schedule": bool(terminated and steps <= DEADLINE_STEPS),
     }
 
 
 def reward_of(rec: dict, w_p: float) -> float:
+    """Discounted episode return of a constant-notch policy, in the units PPO sees."""
     term = ARRIVAL_BONUS if rec["arrived"] else -TIMEOUT_PENALTY
-    return (-W_ENERGY * rec["energy_kwh"]
-            - w_p * rec["sum_beta"]
-            - W_OVERSPEED * rec["sum_overspeed"]
-            + term)
+    return (-W_ENERGY * rec["disc_energy_kwh"]
+            - w_p * rec["disc_sum_beta"]
+            - W_OVERSPEED * rec["disc_sum_overspeed"]
+            + rec["disc_terminal"] * term)
 
 
 def analyze_trip(trip: str):
@@ -90,7 +126,7 @@ def analyze_trip(trip: str):
         r = log_constant_notch(n, trains_file)
         recs.append(r)
         print(f"  notch {n}: {r['steps']:>5d} s  {r['energy_kwh']:>7.1f} kWh  "
-              f"sum_beta={r['sum_beta']:>7.3f}  on_schedule={r['on_schedule']}")
+              f"sum_beta={r['disc_sum_beta']:>7.3f} (disc)  on_schedule={r['on_schedule']}")
 
     # eco target = slowest ON-SCHEDULE notch (lowest energy that still arrives by deadline)
     on_sched = [r for r in recs if r["on_schedule"]]
@@ -105,7 +141,7 @@ def analyze_trip(trip: str):
     if rival is not None:
         a_eco = reward_of(eco, 0.0)
         a_riv = reward_of(rival, 0.0)
-        d_beta = eco["sum_beta"] - rival["sum_beta"]      # eco lags less → negative
+        d_beta = eco["disc_sum_beta"] - rival["disc_sum_beta"]   # eco lags less → negative
         if d_beta < 0:
             wp_star = (a_riv - a_eco) / (-d_beta)   # > this, eco wins
 
@@ -172,9 +208,6 @@ def plot(results: dict):
     primary = os.path.join(_REPO, "results", "plots")
     os.makedirs(primary, exist_ok=True)
     fig.savefig(os.path.join(primary, "fig_reward_theory.png"), dpi=200, bbox_inches="tight")
-    paper = os.path.join(_REPO, "latex", "figures")
-    if os.path.isdir(paper):
-        fig.savefig(os.path.join(paper, "fig_reward_theory.png"), dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 

@@ -1,6 +1,6 @@
 """
 PPO training for the RETURN trip — Ho'jakent → Toshkent (path 1503→1,
-data/netrainsim_v2/train_return.dat).
+netrainsim_v2/train_return.dat in the route-data checkout).
 
 Identical pipeline/hyperparameters to rl/train.py (shared run_training); only
 the trains file and the checkpoint directory differ:

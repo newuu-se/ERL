@@ -25,7 +25,7 @@ Every number is read from a file; nothing is pasted in as a constant:
 
   results/baselines_<trip>.json          rl/run_baselines.py
   results/notch_profile_stochastic.csv   rl/evaluate.py --stochastic
-  data/netrainsim_v2/linksFile_v2_clean.dat   route grade + speed limits
+  $NTS_DATA_DIR/real_data/linksFile_real_data.dat   route grade + speed limits
   logs/train_run_*.log                   training stdout
 
 A figure whose inputs are missing is skipped with a message saying what to run.

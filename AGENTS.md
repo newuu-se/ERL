@@ -1,35 +1,45 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working in this repository.
 
 ## Project Overview
 
 RL-based train energy optimization: a Tianshou PPO agent controls locomotive throttle
-(notch 0–8) each second to minimize total energy consumption over a full A→B trip while
-respecting speed limits and arriving within the scheduled time window.
+(notch 0–8) along a full A→B trip while respecting speed limits and arriving within the
+scheduled time window, minimizing total energy. Each notch is held for 15 simulated
+seconds (action repeat), so an on-schedule trip is ~430 decisions.
 
-Three components:
-1. **NeTrainSim** (`NeTrainSim-adjusted/`) — C++/Qt6 train simulator (GOST resistance,
-   regenerative braking removed, interactive RL mode via `-I`)
-2. **RL layer** (`rl/`) — Python: Gymnasium env + Tianshou PPO training/eval scripts
-3. **Docs** (`gymnasium-docs/`, `tianshou-docs/`) — API reference (do not modify)
+Two external checkouts plus this repo:
+1. **NeTrainSim** ([`newuu-se/NeTrainSim-adjusted`](https://github.com/newuu-se/NeTrainSim-adjusted))
+   — C++/Qt6 train simulator (GOST resistance, regenerative braking removed, interactive
+   RL mode via `-I`). **Not vendored**; referenced through `NTS_SIMULATOR_DIR`.
+2. **Route data** ([`newuu-se/train-routes`](https://github.com/newuu-se/train-routes),
+   private) — nodes/links for the active route + the train consists. Referenced through
+   `NTS_DATA_DIR`.
+3. **This repo** — the RL layer only: `rl/` (Gymnasium env + Tianshou PPO training/eval
+   scripts), `requirements.txt`, `README.md`.
 
 ## Repository Layout
 
-```
-data/
-  real_data/                      ACTIVE dataset — 1503 nodes / 1502 links, 75,064 m
-    nodesFile_real_data.dat       nodes (terminals 1 and 1503)
-    linksFile_real_data.dat       ← what training uses
-  netrainsim_v2/                  Mixed: the two trains files are ACTIVE, the rest is dead
-    trainsFile_rl.dat             ACTIVE — ER9E EMU (3 locos 1213 kW + 3 cars = 373 t),
-                                  path repathed to 1→1503 for real_data
-    train_return.dat              ACTIVE — same consist, reversed path (1503→1)
-    nodesFile_v2_fixed.dat        superseded route (1500 nodes)
-    linksFile_v2_clean.dat        superseded route (1499 links, spike-cleaned grades)
-    linksFile_v2_fixed_speed.dat  superseded route (RAW grades, ±17% DEM spikes)
+This repo contains only the RL layer. Everything else is an external checkout resolved by
+`rl/train_env.py` (env var first, then sibling-of-repo default):
 
-NeTrainSim-adjusted/
+```
+rl/
+  train_env.py                   NeTrainSimEnv (gymnasium.Env, interactive subprocess)
+                               + the external-dependency resolution (NTS_* env vars)
+  train.py                       Tianshou PPO training script (build_policy = source of truth)
+  train_return.py                Same trainer, B→A trip → checkpoints/return/
+  evaluate.py                    Loads checkpoint, runs greedy/stochastic episode → CSV
+  run_baselines.py               Constant-notch frontier → results/baselines_<trip>.json
+  make_plots.py                  The 4 figures → results/plots/ (PNG + PDF)
+  reward_theory.py               Closed-form reward-coefficient analysis (not in default flow)
+requirements.txt                 THE only dependency file (repo root). Python >= 3.10.
+venv/                            Python virtualenv (gymnasium 1.1.1, tianshou 0.5.1, torch 2.x)
+```
+
+```
+$NTS_SIMULATOR_DIR/  (default ../NeTrainSim-adjusted — the simulator's own repo)
   src/
     NeTrainSimConsole/main.cpp    CLI entry; `-I/--interactive` RL JSON loop lives here
     NeTrainSim/
@@ -45,18 +55,23 @@ NeTrainSim-adjusted/
         netlink.cpp               freeFlowSpeed stored and used as m/s
   build-mac.sh / build-linux.sh  Build scripts (macOS / Linux)
 
-rl/
-  train_env.py                   NeTrainSimEnv (gymnasium.Env, interactive subprocess)
-  train.py                       Tianshou PPO training script (build_policy = source of truth)
-  train_return.py                Same trainer, B→A trip → checkpoints/return/
-  evaluate.py                    Loads checkpoint, runs greedy/stochastic episode → CSV
-  run_baselines.py               Constant-notch frontier → results/baselines_<trip>.json
-  make_plots.py                  The 4 figures → results/plots/ (PNG + PDF)
-  reward_theory.py               Closed-form reward-coefficient analysis (not in the default flow)
-
-requirements.txt                 THE only dependency file (repo root). Python >= 3.10.
-venv/                            Python virtualenv (gymnasium 1.1.1, tianshou 0.5.1, torch 2.x)
+$NTS_DATA_DIR/       (default ../data — the route-data repo)
+  real_data/                      ACTIVE dataset — 1503 nodes / 1502 links, 75,064 m
+    nodesFile_real_data.dat       nodes (terminals 1 and 1503)
+    linksFile_real_data.dat       ← what training uses
+  netrainsim_v2/                  Mixed: the two trains files are ACTIVE, the rest is dead
+    trainsFile_rl.dat             ACTIVE — ER9E EMU (3 locos 1213 kW + 3 cars = 373 t),
+                                  path repathed to 1→1503 for real_data
+    train_return.dat              ACTIVE — same consist, reversed path (1503→1)
+    nodesFile_v2_fixed.dat        superseded route (1500 nodes)
+    linksFile_v2_clean.dat        superseded route (1499 links, spike-cleaned grades)
+    linksFile_v2_fixed_speed.dat  superseded route (RAW grades, ±17% DEM spikes)
 ```
+
+The env also accepts the route files at the checkout root (`nodesFile_real_data.dat`,
+`linksFile_real_data.dat`) and the trains files at either root or `netrainsim_v2/`, since
+the data repo has moved them before. A stale `trainsFile_rl.dat` still carrying a `1→1500`
+path belongs to the superseded route and will not work against `real_data`.
 
 **`results/` is not committed** — it is produced entirely by `run_baselines.py`,
 `evaluate.py` and `make_plots.py`. A fresh clone has none of it; `make_plots.py` skips
@@ -75,11 +90,16 @@ trip time, arrival rate), `fig_energy_time_tradeoff` (frontier + policy),
 
 ### NeTrainSim (C++)
 
-Linux (this machine): `./build-linux.sh` from `NeTrainSim-adjusted/` → binary at
-`build-linux/src/NeTrainSimConsole/NeTrainSim`.
+The simulator is a separate checkout (`$NTS_SIMULATOR_DIR`, default `../NeTrainSim-adjusted`).
+Build it **in place**: the binary embeds an absolute `rpath` to `libNeTrainSimCore.dylib`, so
+moving or cloning an existing build tree makes it abort with `Library not loaded` — delete
+the build directory and rebuild instead.
+
+Linux: `./build-linux.sh` → binary at `build-linux/src/NeTrainSimConsole/NeTrainSim`.
 macOS: `brew install qt cmake`, then `./build-mac.sh`.
 
-Run with the active data + trajectory export (run from inside `NeTrainSim-adjusted/`):
+Run with the active data + trajectory export (from inside the simulator checkout; the `../data`
+paths assume the default sibling layout):
 ```bash
 ./build-linux/src/NeTrainSimConsole/NeTrainSim \
   -n ../data/real_data/nodesFile_real_data.dat \
@@ -95,8 +115,12 @@ default `false` and produces no CSV.
 
 ### Data preparation
 
-None — there is no generation step. The two `.dat` files in `data/real_data/`, plus the two
-trains files in `data/netrainsim_v2/`, are checked in and used as-is.
+None — there is no generation step. The two `.dat` files in `real_data/`, plus the two
+trains files, live in the route-data checkout (`$NTS_DATA_DIR`) and are used as-is.
+
+`rl/train_env.py` resolves them at import: `NTS_DATA_DIR` (default `../data`) must contain
+them; `NTS_SIMULATOR_DIR` (default `../NeTrainSim-adjusted`) is checked lazily only when a
+simulator process is actually spawned, so plotting works without a built simulator.
 
 `real_data` grades have NOT been spike-cleaned (the old dataset's
 `clean_grade_spikes.py` is gone — see git history). They span −3.49…+8.49 %, which is
@@ -106,6 +130,9 @@ apparent power draw. Re-measure baselines after any data change:
 `python rl/run_baselines.py`.
 
 ### Python RL layer
+
+Clone the two companion checkouts first (see *Repository Layout*); `rl/train_env.py` finds
+them through `NTS_SIMULATOR_DIR` / `NTS_DATA_DIR`, defaulting to siblings of this repo.
 
 ```bash
 python3.12 -m venv venv              # REQUIRES Python >= 3.10 (PEP 604 unions);
@@ -127,8 +154,8 @@ print('OK')
 
 ## Data Files
 
-Active route data lives in `data/real_data/`; the trains files are still in
-`data/netrainsim_v2/` (repathed `1→1503`). All files are ASCII, tab-separated, and
+Active route data lives in `$NTS_DATA_DIR/real_data/`; the trains files sit alongside it
+(repathed `1→1503`). All files are ASCII, tab-separated, and
 hand-derived — there is no generator script. Formats below (unchanged between datasets).
 
 **real_data facts:** 1503 nodes / 1502 links, 75,064 m, segments 34–66 m; speed limits
@@ -173,6 +200,8 @@ Current config: ER9E EMU — 3 locos (1213 kW, 60 t, type 1 = electric) + 3 cars
 ## Architecture
 
 ### C++ Simulation Engine
+
+All paths in this subsection are relative to the simulator checkout (`$NTS_SIMULATOR_DIR`).
 
 **Entry point:** `src/NeTrainSimConsole/main.cpp` — QCommandLineParser, calls
 `SimulatorAPI::ContinuousMode::createNewSimulationEnvironmentFromFiles()`, then
@@ -323,13 +352,13 @@ Implemented in:
   `trackGrade(%)×10×W_kN`; curve term `|curv°|×(700/1746.4)×W_kN`; regenerative
   braking removed (`getRegenerativeEffeciency` returns 0).
 
-Rebuild after C++ changes: `cd NeTrainSim-adjusted && ./build-linux.sh`
+Rebuild after C++ changes: `cd "${NTS_SIMULATOR_DIR:-../NeTrainSim-adjusted}" && ./build-linux.sh`
 
 ## Key Data Facts
 
-- Route (ACTIVE, `data/real_data/`): 75.064 km, 1503 nodes, 1502 links, 34–66 m per segment.
-  Input files: `data/real_data/{nodesFile_real_data, linksFile_real_data}.dat`
-  + `data/netrainsim_v2/trainsFile_rl.dat` (path 1→1503).
+- Route (ACTIVE, `$NTS_DATA_DIR/real_data/`): 75.064 km, 1503 nodes, 1502 links, 34–66 m per segment.
+  Input files: `real_data/{nodesFile_real_data, linksFile_real_data}.dat`
+  + `netrainsim_v2/trainsFile_rl.dat` (path 1→1503), both inside the route-data checkout.
 - Train: ER9E electric multiple unit — 3 locos (1213 kW, 60 t, type 1 = electric) +
   3 cars (2×78 t + 37 t) = 373 t; links have `hasCatenary=1`
 - Speed limits: near-continuous, 1.42–21.16 m/s (5–76 km/h), 960 distinct values, mean
@@ -338,7 +367,7 @@ Rebuild after C++ changes: `cd NeTrainSim-adjusted && ./build-linux.sh`
   so if it is measured, the agent can only ever drive slower than the real driver did.
 - Grades: −3.49…+8.49 %, net elevation +181.4 m. Four links exceed |4 %|; the steepest is
   link 853 at +8.49 % (that is why `_GRADE_MAX` is 8.5 — at 4.5 those links clipped).
-- SUPERSEDED (`data/netrainsim_v2/`, route files only): 74.89 km, 1500/1499, four speed
+- SUPERSEDED (route-data checkout, route files only): 74.89 km, 1500/1499, four speed
   zones, net +346.6 m, grades −2.7…+4.5 % after DEM-spike cleaning.
 - Trip-time bounds (ACTIVE real_data): theoretical floor ≈ **7,100 s** (Σ length/limit; a
   kinematic pass with EMU accel/brake limits agrees at ~7,050 s).
@@ -365,12 +394,15 @@ Rebuild after C++ changes: `cd NeTrainSim-adjusted && ./build-linux.sh`
 ## Testing & Validation
 
 ```bash
-# 1. Verify simulator runs with the active data (run from inside NeTrainSim-adjusted/)
-cd NeTrainSim-adjusted && mkdir -p res
+# 1. Verify simulator runs with the active data
+#    Both dirs default to siblings of this repo when the env vars are unset.
+SIM="$(cd "${NTS_SIMULATOR_DIR:-../NeTrainSim-adjusted}" && pwd)"
+DATA="$(cd "${NTS_DATA_DIR:-../data}" && pwd)"
+cd "$SIM" && mkdir -p res
 ./build-linux/src/NeTrainSimConsole/NeTrainSim \
-  -n ../data/real_data/nodesFile_real_data.dat \
-  -l ../data/real_data/linksFile_real_data.dat \
-  -t ../data/netrainsim_v2/trainsFile_rl.dat \
+  -n "$DATA/real_data/nodesFile_real_data.dat" \
+  -l "$DATA/real_data/linksFile_real_data.dat" \
+  -t "$DATA/netrainsim_v2/trainsFile_rl.dat" \
   -o res -e true -p 1.0        # note: -e takes 'true', not a bare flag
 ls res/trainTrajectory_*.csv
 
