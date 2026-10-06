@@ -1,0 +1,15 @@
+To cite NeTrainSim in publications use:
+
+Aredah, A.S., Fadhloun, K. & Rakha, H.A. NeTrainSim: a network-level simulator for modeling freight train longitudinal motion and energy consumption. Railw. Eng. Sci. (2024). https://doi.org/10.1007/s40534-024-00331-x
+
+A BibTeX entry for LaTeX users is
+
+@article{aredah2024netrainsim,
+  title={NeTrainSim: a network-level simulator for modeling freight train longitudinal motion and energy consumption},
+  author={Aredah, Ahmed S and Fadhloun, Karim and Rakha, Hesham A},
+  journal={Railway Engineering Science},
+  pages={1--19},
+  year={2024},
+  publisher={Springer},
+  doi = {https://doi.org/10.1007/s40534-024-00331-x}
+}

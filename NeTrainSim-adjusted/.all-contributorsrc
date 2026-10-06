@@ -1,0 +1,35 @@
+{
+  "files": [
+    "README.md"
+  ],
+  "imageSize": 100,
+  "commit": false,
+  "commitType": "docs",
+  "commitConvention": "angular",
+  "contributors": [
+    {
+      "login": "heshamrakha",
+      "name": "Hesham Rakha",
+      "avatar_url": "https://avatars.githubusercontent.com/u/11538915?v=4",
+      "profile": "https://github.com/heshamrakha",
+      "contributions": [
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "ahmedaredah",
+      "name": "Ahmed Aredah",
+      "avatar_url": "https://avatars.githubusercontent.com/u/77444744?v=4",
+      "profile": "https://github.com/AhmedAredah",
+      "contributions": [
+        "code"
+      ]
+    }
+  ],
+  "contributorsPerLine": 7,
+  "skipCi": true,
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "projectName": "NeTrainSim",
+  "projectOwner": "VTTI-CSM"
+}

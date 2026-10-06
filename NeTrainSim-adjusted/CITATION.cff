@@ -1,0 +1,54 @@
+cff-version: 1.2.0
+message: Please cite this software using these metadata or in the CITATION file.
+type: software
+title: NeTrainSim
+version: 0.1.2
+date-released: 2023-07-23
+doi: 10.1007/s40534-024-00331-x
+abstract: Although train modeling research is vast, most available simulation tools are 
+confined to city- or trip-scale analysis, primarily offering micro-level simulations of 
+network segments. This paper addresses this void by developing the NeTrainSim simulator 
+for heavy long-haul freight trains on a network of multiple intersecting tracks. The main 
+objective of this simulator is to enable a comprehensive analysis of energy consumption 
+and the associated carbon footprint for the entire train system. Four case studies were 
+conducted to demonstrate the simulator’s performance. The first case study validates the 
+model by comparing NeTrainSim output to empirical trajectory data. The results demonstrate 
+that the simulated trajectory is precise enough to estimate the train energy consumption 
+and carbon dioxide emissions. The second application demonstrates the train-following model 
+considering six trains following each other. The results showcase the model ability to maintain 
+safe-following distances between successive trains. The next study highlights the simulator’s 
+ability to resolve train conflicts for different scenarios. Finally, the suitability of the 
+NeTrainSim for modeling realistic railroad networks is verified through the modeling of the 
+entire US network and comparing alternative powertrains on the fleet energy consumption.
+
+repository-code: https://github.com/VTTI-CSM/NeTrainSim
+license: GPLv3
+authors:
+  - given-names: Ahmed
+    family-names: Aredah
+    affiliation: Virginia Tech 
+    orcid: https://orcid.org/0000-0003-0186-3783
+  - given-names: Karim
+    family-names: Fadhloun
+    affiliation: Virginia Department of Transportation
+  - given-names: Hesham
+    family-names: Rakha
+    affiliation: Virginia Tech 
+    orcid: https://orcid.org/0000-0002-5845-2929
+
+Other Contributers:
+  - given-names: George
+    family-names: List
+    affiliation: North Carolina State University
+  - given-names: Mohamed
+    family-names: Hegazi
+    affiliation: Deutsch Bahn
+  - given-names: Andreas
+    family-names: Hoffrichter
+    affiliation: Deutsch Bahn
+
+keywords:
+  - NeTrainSim
+  - Network Trains Simulation
+  - Energy Consumption
+  - Environmental Footprint
