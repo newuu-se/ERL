@@ -1,0 +1,15 @@
+[project]
+name = "erl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "gymnasium==1.1.1",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "python-dotenv>=1.2.4",
+    "tensorboard>=2.14",
+    "tianshou==0.5.1",
+    "torch>=2.0",
+]
