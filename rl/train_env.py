@@ -69,7 +69,6 @@ TRAINS_FILE = os.getenv("TRAIN_FILE", "")
 
 TRAINS_FILE_RETURN = os.getenv("TRAIN_RETURN_FILE", "")
 
-# TODO: add route calculation logic
 links = read_links_file(LINKS_FILE)
 TOTAL_ROUTE_LENGTH_M = sum(link["length_m"] for link in links)
 STATE_PREFIX = "NTS_JSON "
