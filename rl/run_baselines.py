@@ -21,8 +21,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from rl.train_env import (NeTrainSimEnv, TRAINS_FILE, TRAINS_FILE_RETURN,
-                          LINKS_FILE)
+from rl.train_env import NeTrainSimEnv, TRAINS_FILE, TRAINS_FILE_RETURN, LINKS_FILE
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_DIR = os.path.join(_REPO, "results")
@@ -56,8 +55,7 @@ def run_constant_notch(notch: int, trains_file: str = TRAINS_FILE):
     max_step_energy = 0.0
     while not (terminated or truncated):
         _, _, terminated, truncated, _ = env.step(notch)
-        max_step_energy = max(max_step_energy,
-                              float(env._last_state["energy_kwh"]))
+        max_step_energy = max(max_step_energy, float(env._last_state["energy_kwh"]))
     steps, energy = env._step_count, env._cum_energy_kwh
     env.close()
     return steps, energy, max_step_energy, terminated
@@ -65,31 +63,39 @@ def run_constant_notch(notch: int, trains_file: str = TRAINS_FILE):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--return-trip", action="store_true",
-                        help="measure the B→A return trip (train_return.dat)")
+    parser.add_argument(
+        "--return-trip",
+        action="store_true",
+        help="measure the B→A return trip (train_return.dat)",
+    )
     parser.add_argument("notches", nargs="*", type=int, default=DEFAULT_NOTCHES)
     args = parser.parse_args()
 
     trip = "return" if args.return_trip else "forward"
     trains_file = TRAINS_FILE_RETURN if args.return_trip else TRAINS_FILE
 
-    print(f"trip: {'B→A return' if args.return_trip else 'A→B forward'}  "
-          f"({os.path.basename(trains_file)})")
-    print(f"{'notch':>5}  {'steps(s)':>9}  {'energy(kWh)':>12}  "
-          f"{'maxE/step':>9}  {'arrived':>7}")
+    print(
+        f"trip: {'B→A return' if args.return_trip else 'A→B forward'}  "
+        f"({os.path.basename(trains_file)})"
+    )
+    print(
+        f"{'notch':>5}  {'steps(s)':>9}  {'energy(kWh)':>12}  "
+        f"{'maxE/step':>9}  {'arrived':>7}"
+    )
 
     records = []
     for n in sorted(args.notches):
         steps, energy, max_e, arrived = run_constant_notch(n, trains_file)
-        records.append({
-            "notch": n,
-            "steps": steps,
-            "energy_kwh": round(energy, 2),
-            "max_step_energy_kwh": round(max_e, 3),
-            "arrived": bool(arrived),
-        })
-        print(f"{n:>5}  {steps:>9,}  {energy:>12.2f}  {max_e:>9.3f}  "
-              f"{str(arrived):>7}")
+        records.append(
+            {
+                "notch": n,
+                "steps": steps,
+                "energy_kwh": round(energy, 2),
+                "max_step_energy_kwh": round(max_e, 3),
+                "arrived": bool(arrived),
+            }
+        )
+        print(f"{n:>5}  {steps:>9,}  {energy:>12.2f}  {max_e:>9.3f}  {str(arrived):>7}")
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     payload = {
@@ -103,8 +109,10 @@ def main():
     with open(out, "w") as f:
         json.dump(payload, f, indent=2)
         f.write("\n")
-    print(f"\nwrote {os.path.relpath(out, _REPO)}  "
-          f"— rl/make_plots.py reads this directly (no manual copy step)")
+    print(
+        f"\nwrote {os.path.relpath(out, _REPO)}  "
+        f"— rl/make_plots.py reads this directly (no manual copy step)"
+    )
 
 
 if __name__ == "__main__":

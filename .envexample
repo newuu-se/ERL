@@ -2,10 +2,10 @@
 NETRAINSIM_BIN="/path/to/netrainsim"
 
 # Route configuration
-NODE_FILE="/path/to/nodes.bin"
-LINK_FILE="/path/to/links.bin"
-TRAIN_FILE="/path/to/trains.bin"
-TRAIN_RETURN_FILE="/path/to/train_return.bin"
+NODE_FILE="/path/to/nodes.bat"
+LINK_FILE="/path/to/links.bat"
+TRAIN_FILE="/path/to/trains.bat"
+TRAIN_RETURN_FILE="/path/to/train_return.bat"
 
 LOGS_DIR="/path/to/logs"
 

@@ -27,22 +27,22 @@ back a state line prefixed `NTS_JSON `. Training runs 8 such subprocesses in par
 This repository is **only the RL layer**. The simulator and the route data live in their
 own repositories and are *referenced*, not vendored:
 
-| Component | Where |
-|---|---|
-| Gymnasium environment + reward | `rl/train_env.py` — this repo |
-| PPO training, evaluation, baselines, plots | `rl/` — this repo |
-| C++ simulator (forked, with `-I` interactive mode) | [`newuu-se/NeTrainSim-adjusted`](https://github.com/newuu-se/NeTrainSim-adjusted) |
-| Route data, nodes/links, train consists | [`newuu-se/train-routes`](https://github.com/newuu-se/train-routes) (private) |
+| Component                                          | Where                                                                         |
+|----------------------------------------------------|-------------------------------------------------------------------------------|
+| Gymnasium environment + reward                     | `rl/train_env.py` — this repo                                                 |
+| PPO training, evaluation, baselines, plots         | `rl/` — this repo                                                             |
+| C++ simulator (forked, with `-I` interactive mode) | [`newuu-se/NeTrainSim`](https://github.com/newuu-se/NeTrainSim)               |
+| Route data, nodes/links, train consists            | [`newuu-se/train-routes`](https://github.com/newuu-se/train-routes) (private) |
 
-`rl/train_env.py` locates them through two environment variables, each falling back to a
+`rl/train_env.py` locates them through environment variables, each falling back to a
 sibling checkout of this repo:
+`NETRAINSIM_BIN` - path to the simulator binary
+`NODE_FILE` - path to the nodes file
+`LINK_FILE` - path to the links file
+`TRAIN_FILE` - path to the trains file
+`TRAIN_RETURN_FILE` - path to the train return file
 
-| Variable | Default | Points at |
-|---|---|---|
-| `NTS_SIMULATOR_DIR` | `../NeTrainSim-adjusted` | the simulator checkout, built |
-| `NTS_DATA_DIR` | `../data` | the route-data checkout |
-
-If either is missing, importing `rl.train_env` fails immediately with the path it looked
+If any is missing, importing `rl.train_env` fails immediately with the path it looked
 for and how to set it — the failure is never silent.
 
 ---
@@ -59,16 +59,10 @@ checkouts — clone them **beside** this repo, which is the layout the code expe
 default:
 
 ```bash
-git clone https://github.com/newuu-se/NeTrainSim-adjusted
+git clone https://github.com/newuu-se/NeTrainSim
 git clone https://github.com/newuu-se/train-routes data
 ```
 
-Or keep them anywhere and point the environment variables at them:
-
-```bash
-export NTS_SIMULATOR_DIR=/path/to/NeTrainSim-adjusted
-export NTS_DATA_DIR=/path/to/train-routes
-```
 
 The data checkout must supply `nodesFile_real_data.dat`, `linksFile_real_data.dat`,
 `trainsFile_rl.dat` (forward path `1→1503`) and `train_return.dat` (reverse path
@@ -86,23 +80,23 @@ brew install cmake qt python@3.12
 
 You need **Python 3.10 or newer**. macOS ships 3.9 as `python3`, and the code uses PEP 604
 unions (`int | None`) that raise `TypeError` on import under 3.9 — so always call the
-interpreter explicitly (`python3.12`), never bare `python3`.
+interpreter explicitly (`python3.14`), never bare `python3`. 
 
 Linux: install `cmake`, `qt6-base-dev`, and a Python ≥ 3.10 through your package manager.
 
 ## 2. Build the C++ simulator
 
 ```bash
-cd "${NTS_SIMULATOR_DIR:-../NeTrainSim-adjusted}"
-./build-mac.sh        # macOS
-# ./build-linux.sh    # Linux
+cd "-../NeTrainSim"
+make mac    # macOS
+# make linux  # Linux
 cd -
 ```
 
 Confirm the binary exists before going on — nothing else works without it:
 
 ```bash
-ls "${NTS_SIMULATOR_DIR:-../NeTrainSim-adjusted}"/build-mac/src/NeTrainSimConsole/NeTrainSim
+ls ../NeTrainSim/build-mac/src/NeTrainSimConsole/NeTrainSim
 ```
 
 > **Build in place.** The binary embeds an absolute `rpath` to
@@ -113,12 +107,18 @@ ls "${NTS_SIMULATOR_DIR:-../NeTrainSim-adjusted}"/build-mac/src/NeTrainSimConsol
 ## 3. Create the Python environment
 
 ```bash
-python3.12 -m venv venv
-source venv/bin/activate
+python3.14 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
+or use uv (recommended):
+```bash
+uv venv -p 3.14
+source .venv/bin/activate
+uv sync
+```
 
-`requirements.txt` at the repo root is the **only** dependency file.
+`requirements.txt`, `pyproject.toml` and `uv.lock` at the repo root are the dependency files.
 
 ## 4. Verify the environment
 
@@ -198,15 +198,15 @@ produces them, so running it early is safe and tells you what is left to do.
 
 ## Scripts
 
-| File | Purpose |
-|---|---|
-| `rl/train_env.py` | Gymnasium env: subprocess bridge, 9-feature observation, reward |
-| `rl/train.py` | PPO training. `build_policy()` is shared with evaluation so the two cannot drift |
-| `rl/train_return.py` | Same trainer, reverse trip |
-| `rl/evaluate.py` | Load a checkpoint, run one episode, export position/speed/notch/energy |
-| `rl/run_baselines.py` | Measure the constant-notch energy/time frontier → JSON |
-| `rl/make_plots.py` | The four figures below. Reads every number from a file — no pasted constants |
-| `rl/reward_theory.py` | Closed-form analysis of the reward coefficients (not in the default flow) |
+| File                  | Purpose                                                                          |
+|-----------------------|----------------------------------------------------------------------------------|
+| `rl/train_env.py`     | Gymnasium env: subprocess bridge, 9-feature observation, reward                  |
+| `rl/train.py`         | PPO training. `build_policy()` is shared with evaluation so the two cannot drift |
+| `rl/train_return.py`  | Same trainer, reverse trip                                                       |
+| `rl/evaluate.py`      | Load a checkpoint, run one episode, export position/speed/notch/energy           |
+| `rl/run_baselines.py` | Measure the constant-notch energy/time frontier → JSON                           |
+| `rl/make_plots.py`    | The four figures below. Reads every number from a file — no pasted constants     |
+| `rl/reward_theory.py` | Closed-form analysis of the reward coefficients (not in the default flow)        |
 
 Nothing under `results/`, `checkpoints/` or `logs/` is committed — all three are produced
 by the commands above.
@@ -215,12 +215,12 @@ by the commands above.
 
 Each answers one question, in the order you would ask them:
 
-| Figure | Question it answers |
-|---|---|
+| Figure                         | Question it answers                                                                 |
+|--------------------------------|-------------------------------------------------------------------------------------|
 | `fig_training_progress_<trip>` | **Did training work?** Reward, trip energy, trip time and arrival rate over the run |
-| `fig_energy_time_tradeoff` | **Is the policy good?** The constant-notch frontier with the policy on it |
-| `fig_speed_profile_<trip>` | **What does it do?** Speed vs limit, chosen notch, and the terrain driving it |
-| `fig_energy_usage_<trip>` | **Where does the energy go?** Cumulative energy and kWh/km against grade |
+| `fig_energy_time_tradeoff`     | **Is the policy good?** The constant-notch frontier with the policy on it           |
+| `fig_speed_profile_<trip>`     | **What does it do?** Speed vs limit, chosen notch, and the terrain driving it       |
+| `fig_energy_usage_<trip>`      | **Where does the energy go?** Cumulative energy and kWh/km against grade            |
 
 If panel (b) of the training figure does not fall and panel (d) does not rise toward
 100 %, the run failed — read that before anything else.
@@ -229,7 +229,7 @@ If panel (b) of the training figure does not fall and panel (d) does not rise to
 
 ## The route and the train
 
-Active dataset: **`real_data/`** in the route-data checkout (`$NTS_DATA_DIR`)
+Active dataset: **`real_data/`** in the route-data checkout (`train-routes` repo)
 
 - **Route:** 75.064 km, 1503 nodes / 1502 links (34–66 m per segment)
 - **Speed limits:** 1.42 – 21.16 m/s (5 – 76 km/h), **960 distinct values** — a
@@ -240,7 +240,7 @@ Active dataset: **`real_data/`** in the route-data checkout (`$NTS_DATA_DIR`)
 - **Electrification:** catenary on every link
 
 ```
-$NTS_DATA_DIR/
+train-routes/
   nodesFile_real_data.dat     1503 nodes (x, y in metres), terminals at 1 and 1503
   linksFile_real_data.dat     1502 links  ← training reads this
 
@@ -304,12 +304,12 @@ zones, +346.6 m climb). The active `real_data` route is slower and differently g
 these do **not** transfer. They are kept only as an indication of what the method achieved
 before; the real target is whatever step 5 measures.
 
-| policy | trip time (s) | energy (kWh) |
-|---|---|---|
-| constant N8 | 5,602 | 862.4 |
-| constant N3 *(eco, on-time)* | 6,442 | 788.6 |
-| constant N2 | 8,492 *(late)* | 758.4 |
-| **RL (w_P = 2, 5 seeds)** | **6,203 ± 440** | **819.7 ± 26.7** |
+| policy                       | trip time (s)   | energy (kWh)     |
+|------------------------------|-----------------|------------------|
+| constant N8                  | 5,602           | 862.4            |
+| constant N3 *(eco, on-time)* | 6,442           | 788.6            |
+| constant N2                  | 8,492 *(late)*  | 758.4            |
+| **RL (w_P = 2, 5 seeds)**    | **6,203 ± 440** | **819.7 ± 26.7** |
 
 On that route the pace weight `w_P` controlled **schedule reliability, not the energy–time
 price**: energy was statistically flat across `w_P ∈ {0,1,2,4,8}` (all p > 0.66) while
@@ -336,7 +336,7 @@ statistics have been removed (see git history for `rl/run_campaign.py`,
 
 ## Gotchas
 
-1. **Use `python3.12`, not `python3`.** macOS's default 3.9 cannot import this code.
+1. **Use `python3.14`, not `python3`.** macOS's default 3.9 cannot import this code.
 2. **`-e` takes a value.** `-e true` exports the trajectory CSV; a bare `-e` silently
    defaults to false and writes nothing.
 3. **Speeds in `.dat` files are m/s**, not km/h (confirmed in `netlink.cpp`).

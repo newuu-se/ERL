@@ -32,57 +32,70 @@ from tianshou.utils.net.common import Net
 from tianshou.utils.net.discrete import Actor, Critic
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from rl.train_env import (NeTrainSimEnv, ARRIVAL_BONUS, DEADLINE_STEPS,
-                          W_ENERGY, W_PACE, W_OVERSPEED, W_SMOOTH)
+from rl.train_env import (
+    NeTrainSimEnv,
+    ARRIVAL_BONUS,
+    DEADLINE_STEPS,
+    W_ENERGY,
+    W_PACE,
+    W_OVERSPEED,
+    W_SMOOTH,
+)
 
 # CPU is faster: network is tiny and inference runs one step at a time,
 # so GPU kernel-launch overhead exceeds any compute gain.
 DEVICE = "cpu"
 
 NUM_TRAIN_ENVS = 8
-NUM_TEST_ENVS  = 1
+NUM_TEST_ENVS = 1
 
 HIDDEN_SIZES = [256, 128, 64]
-LR           = 3e-4
-DISCOUNT     = 0.9999  # episodes are ~6k steps (1 step = 1 s); this is a near-undiscounted
-                       # min-energy-to-goal problem. At 0.99 terminal signals vanished; at 0.999
-                       # the discounting still distorted the long energy SUM and biased toward
-                       # finishing sooner (= high notch, high energy — a run plateaued at ~965 kWh).
-                       # 0.9999 (effective horizon ~10k > episode) keeps the energy objective
-                       # ~undistorted and the arrival/timeout terminal signals visible.
-ENT_COEF     = 0.004   # INITIAL value — linearly annealed to 0 by ENT_ANNEAL_END (see train_fn).
-                       # A constant coefficient pinned the policy at uniform (run 2026-06-11_1140:
-                       # loss/ent stayed at 2.190 ≈ ln 9 for all 100 epochs; sampled histogram flat
-                       # 29-58 per notch; argmax parked at notch 0 and timed out). The per-decision
-                       # advantage gradient is smaller than the entropy gradient, so exploration
-                       # must taper for the policy to commit.
-ENT_ANNEAL_END = 140   # epoch at which the entropy bonus reaches 0 (70% of MAX_EPOCH, same
-                       # fraction as the 100-epoch runs); the remaining epochs converge the
-                       # now-committed policy on the pure objective
-MAX_EPOCH    = 200     # doubled from 100: the 100-epoch return run was still improving at the
-                       # final epoch (best @ ep100), and the forward run's argmax stopped one
-                       # notch short of the eco optimum — both point at training budget
+LR = 3e-4
+DISCOUNT = 0.9999  # episodes are ~6k steps (1 step = 1 s); this is a near-undiscounted
+# min-energy-to-goal problem. At 0.99 terminal signals vanished; at 0.999
+# the discounting still distorted the long energy SUM and biased toward
+# finishing sooner (= high notch, high energy — a run plateaued at ~965 kWh).
+# 0.9999 (effective horizon ~10k > episode) keeps the energy objective
+# ~undistorted and the arrival/timeout terminal signals visible.
+ENT_COEF = (
+    0.004  # INITIAL value — linearly annealed to 0 by ENT_ANNEAL_END (see train_fn).
+)
+# A constant coefficient pinned the policy at uniform (run 2026-06-11_1140:
+# loss/ent stayed at 2.190 ≈ ln 9 for all 100 epochs; sampled histogram flat
+# 29-58 per notch; argmax parked at notch 0 and timed out). The per-decision
+# advantage gradient is smaller than the entropy gradient, so exploration
+# must taper for the policy to commit.
+ENT_ANNEAL_END = (
+    140  # epoch at which the entropy bonus reaches 0 (70% of MAX_EPOCH, same
+)
+# fraction as the 100-epoch runs); the remaining epochs converge the
+# now-committed policy on the pure objective
+MAX_EPOCH = 200  # doubled from 100: the 100-epoch return run was still improving at the
+# final epoch (best @ ep100), and the forward run's argmax stopped one
+# notch short of the eco optimum — both point at training budget
 
-EPISODES_PER_COLLECT = NUM_TRAIN_ENVS   # 8 parallel episodes before each update
-EPISODES_PER_TEST    = 1
-REPEAT_PER_COLLECT   = 4                # PPO reuses each collected batch 4×
-BATCH_SIZE           = 2048
-STEP_PER_EPOCH       = 3_000   # env-steps/epoch. With CONTROL_INTERVAL=15 an episode is ~470
-                               # env-steps (not ~7k), so 3k ≈ one 8-episode collect per epoch
+EPISODES_PER_COLLECT = NUM_TRAIN_ENVS  # 8 parallel episodes before each update
+EPISODES_PER_TEST = 1
+REPEAT_PER_COLLECT = 4  # PPO reuses each collected batch 4×
+BATCH_SIZE = 2048
+STEP_PER_EPOCH = 3_000  # env-steps/epoch. With CONTROL_INTERVAL=15 an episode is ~470
+# env-steps (not ~7k), so 3k ≈ one 8-episode collect per epoch
 
 # PPO / network architecture — single source of truth, also imported by evaluate.py
 # so the eval-time policy can never drift from the trained one.
-OBS_SHAPE     = (9,)   # 7 physics features + time_frac + behind_frac (see train_env.py)
-N_ACTIONS     = 9
-EPS_CLIP      = 0.2     # clip ratio — prevents large destructive updates
-VF_COEF       = 0.5     # value-loss weight
-GAE_LAMBDA    = 0.95    # GAE smoothing for advantage estimates
+OBS_SHAPE = (9,)  # 7 physics features + time_frac + behind_frac (see train_env.py)
+N_ACTIONS = 9
+EPS_CLIP = 0.2  # clip ratio — prevents large destructive updates
+VF_COEF = 0.5  # value-loss weight
+GAE_LAMBDA = 0.95  # GAE smoothing for advantage estimates
 MAX_GRAD_NORM = 0.5
-ADV_NORM      = True    # advantage normalization
-REWARD_NORM   = True    # ON — at γ=0.9999 returns are large (~-1000) sums; normalizing the
-                        # returns stabilizes the value fn (the prior run diverged with it off)
+ADV_NORM = True  # advantage normalization
+REWARD_NORM = True  # ON — at γ=0.9999 returns are large (~-1000) sums; normalizing the
+# returns stabilizes the value fn (the prior run diverged with it off)
 
-CHECKPOINT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "checkpoints")
+CHECKPOINT_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "checkpoints"
+)
 
 _train_start = time.time()
 
@@ -105,11 +118,15 @@ def build_policy(device: str = DEVICE):
     """Construct the PPO policy (and its actor/critic/optim) from the shared
     hyperparameters above. Used by both training and evaluation so the two can
     never diverge. Returns (policy, actor, critic, optim)."""
-    net_actor  = Net(state_shape=OBS_SHAPE, hidden_sizes=HIDDEN_SIZES, device=device)
+    net_actor = Net(state_shape=OBS_SHAPE, hidden_sizes=HIDDEN_SIZES, device=device)
     net_critic = Net(state_shape=OBS_SHAPE, hidden_sizes=HIDDEN_SIZES, device=device)
-    actor  = Actor(net_actor,  action_shape=N_ACTIONS, softmax_output=True, device=device).to(device)
+    actor = Actor(
+        net_actor, action_shape=N_ACTIONS, softmax_output=True, device=device
+    ).to(device)
     critic = Critic(net_critic, device=device).to(device)
-    optim  = torch.optim.Adam(list(actor.parameters()) + list(critic.parameters()), lr=LR)
+    optim = torch.optim.Adam(
+        list(actor.parameters()) + list(critic.parameters()), lr=LR
+    )
     policy = PPOPolicy(
         actor=actor,
         critic=critic,
@@ -127,14 +144,16 @@ def build_policy(device: str = DEVICE):
     return policy, actor, critic, optim
 
 
-def run_training(make_env_fn=make_env,
-                 checkpoint_dir: str = CHECKPOINT_DIR,
-                 trip_label: str = "A→B (Toshkent→Ho'jakent)",
-                 seed: int | None = None,
-                 max_epoch: int = MAX_EPOCH,
-                 ent_anneal_end: int | None = None,
-                 constant_entropy: bool = False,
-                 save_every: int = 10):
+def run_training(
+    make_env_fn=make_env,
+    checkpoint_dir: str = CHECKPOINT_DIR,
+    trip_label: str = "A→B (Toshkent→Ho'jakent)",
+    seed: int | None = None,
+    max_epoch: int = MAX_EPOCH,
+    ent_anneal_end: int | None = None,
+    constant_entropy: bool = False,
+    save_every: int = 10,
+):
     """Full PPO training loop. Parameterized so every run reuses the exact same
     trainer — only the env factory, checkpoint directory, seed, budget, and
     entropy schedule differ. Used by train.py and train_return.py. (The reward
@@ -159,16 +178,25 @@ def run_training(make_env_fn=make_env,
     print(f"  Device       : {DEVICE}")
     print(f"  Seed         : {seed}")
     print(f"  Train envs   : {NUM_TRAIN_ENVS} parallel C++ simulators")
-    print(f"  Epochs       : {max_epoch}  (per-epoch checkpoint every {save_every or '—'})")
+    print(
+        f"  Epochs       : {max_epoch}  (per-epoch checkpoint every {save_every or '—'})"
+    )
     print(f"  Checkpoints  : {os.path.relpath(checkpoint_dir)}")
-    _ent_desc = (f"ent_coef={ENT_COEF} (CONSTANT — ablation)" if constant_entropy
-                 else f"ent_coef={ENT_COEF}→0 by ep{ent_anneal_end}")
-    print(f"  Algorithm    : PPO  (eps_clip=0.2, {_ent_desc}, discount={DISCOUNT}, repeat={REPEAT_PER_COLLECT}×)")
-    print(f"  Reward       : -{W_ENERGY:g}·energy  -{W_PACE:g}·pace  -{W_OVERSPEED:g}·overspeed  -{W_SMOOTH:g}·|Δnotch|  +{ARRIVAL_BONUS:.0f} arrival (deadline {DEADLINE_STEPS} steps)")
+    _ent_desc = (
+        f"ent_coef={ENT_COEF} (CONSTANT — ablation)"
+        if constant_entropy
+        else f"ent_coef={ENT_COEF}→0 by ep{ent_anneal_end}"
+    )
+    print(
+        f"  Algorithm    : PPO  (eps_clip=0.2, {_ent_desc}, discount={DISCOUNT}, repeat={REPEAT_PER_COLLECT}×)"
+    )
+    print(
+        f"  Reward       : -{W_ENERGY:g}·energy  -{W_PACE:g}·pace  -{W_OVERSPEED:g}·overspeed  -{W_SMOOTH:g}·|Δnotch|  +{ARRIVAL_BONUS:.0f} arrival (deadline {DEADLINE_STEPS} steps)"
+    )
     print("━" * 65 + "\n")
 
     train_envs = SubprocVectorEnv([make_env_fn] * NUM_TRAIN_ENVS)
-    test_envs  = SubprocVectorEnv([make_env_fn] * NUM_TEST_ENVS)
+    test_envs = SubprocVectorEnv([make_env_fn] * NUM_TEST_ENVS)
     if seed is not None:
         train_envs.seed(seed)
         test_envs.seed(seed + 10_000)
@@ -185,10 +213,10 @@ def run_training(make_env_fn=make_env,
             policy._weight_ent = ENT_COEF * max(0.0, 1.0 - epoch / ent_anneal_end)
         elapsed = (time.time() - _train_start) / 60
         print(
-            f"\n{'━'*65}\n"
+            f"\n{'━' * 65}\n"
             f"  Epoch {epoch:3d}/{max_epoch}  │  {env_step:>10,} steps  │  {elapsed:.1f} min elapsed"
             f"  │  ent_coef={policy._weight_ent:.5f}\n"
-            f"{'━'*65}",
+            f"{'━' * 65}",
             flush=True,
         )
 
@@ -215,7 +243,7 @@ def run_training(make_env_fn=make_env,
         buffer_num=NUM_TRAIN_ENVS,
     )
     train_collector = Collector(policy, train_envs, buffer)
-    test_collector  = Collector(policy, test_envs)
+    test_collector = Collector(policy, test_envs)
 
     trainer = OnpolicyTrainer(
         policy=policy,
@@ -241,11 +269,11 @@ def run_training(make_env_fn=make_env,
     torch.save(policy.state_dict(), final_path)
 
     total_min = (time.time() - _train_start) / 60
-    print(f"\n{'━'*65}")
+    print(f"\n{'━' * 65}")
     print(f"  Training complete in {total_min:.1f} min")
     print(f"  Best reward : {result['best_reward']:.3f}")
     print(f"  Final model : {final_path}")
-    print(f"{'━'*65}")
+    print(f"{'━' * 65}")
     return result
 
 
