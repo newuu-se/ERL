@@ -1,0 +1,19 @@
+[project]
+name = "erl"
+version = "0.1.0"
+description = """RL-based train energy optimization: a Tianshou PPO agent controls locomotive throttle
+(notch 0–8) along a full A→B trip while respecting speed limits and arriving within the
+scheduled time window, minimizing total energy. Each notch is held for 15 simulated
+seconds (action repeat), so an on-schedule trip is ~430 decisions."""
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "gymnasium==1.1.1",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "python-dotenv>=1.2.4",
+    "ruff>=0.17.2",
+    "tensorboard>=2.14",
+    "tianshou==0.5.1",
+    "torch>=2.0",
+]

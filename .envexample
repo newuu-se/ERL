@@ -1,0 +1,19 @@
+# NeTrainSim defaults
+NETRAINSIM_BIN="/path/to/netrainsim"
+
+# Route configuration
+NODE_FILE="/path/to/nodes.bat"
+LINK_FILE="/path/to/links.bat"
+TRAIN_FILE="/path/to/trains.bat"
+TRAIN_RETURN_FILE="/path/to/train_return.bat"
+
+LOGS_DIR="/path/to/logs"
+
+# RL reward configuration
+RL_W_ENERGY=3.0
+RL_W_PACE=2.0
+RL_W_OVERSPEED=1.0
+RL_W_SMOOTH=0.15
+RL_W_ARRIVAL_BONUS=200.0
+RL_W_TIMEOUT_PENALTY=1500.0
+RL_ABLATE_TIME=0

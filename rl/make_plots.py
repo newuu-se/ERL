@@ -36,6 +36,7 @@ Usage:
     source venv/bin/activate
     python rl/make_plots.py
 """
+
 import csv
 import glob
 import json
@@ -44,6 +45,7 @@ import re
 import sys
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -63,48 +65,50 @@ ROUTE_KM = TOTAL_ROUTE_LENGTH_M / 1000.0
 COL1, COL2 = 3.46, 7.09
 
 # ── Okabe-Ito colourblind-safe palette ───────────────────────────────────────
-BLUE   = "#0072B2"   # the RL policy
-ORANGE = "#E69F00"   # energy
-GREEN  = "#009E73"   # return trip / success
-VERM   = "#D55E00"   # limits, deadlines, warnings
-PURPLE = "#CC79A7"   # notch
-SKY    = "#56B4E9"
-GREY   = "#6E6E6E"
-INK    = "#1A1A1A"
+BLUE = "#0072B2"  # the RL policy
+ORANGE = "#E69F00"  # energy
+GREEN = "#009E73"  # return trip / success
+VERM = "#D55E00"  # limits, deadlines, warnings
+PURPLE = "#CC79A7"  # notch
+SKY = "#56B4E9"
+GREY = "#6E6E6E"
+INK = "#1A1A1A"
 
-plt.rcParams.update({
-    "figure.dpi": 150,
-    "savefig.dpi": 300,
-    "savefig.bbox": "tight",
-    "savefig.pad_inches": 0.02,
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
-    "font.size": 8,
-    "axes.titlesize": 8.5,
-    "axes.labelsize": 8,
-    "axes.linewidth": 0.6,
-    "axes.edgecolor": INK,
-    "axes.labelcolor": INK,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.grid": True,
-    "grid.color": "#D9D9D9",
-    "grid.linewidth": 0.4,
-    "xtick.labelsize": 7.5,
-    "ytick.labelsize": 7.5,
-    "xtick.color": INK,
-    "ytick.color": INK,
-    "xtick.major.width": 0.6,
-    "ytick.major.width": 0.6,
-    "xtick.major.size": 2.5,
-    "ytick.major.size": 2.5,
-    "legend.fontsize": 7.5,
-    "legend.frameon": False,
-    "legend.handlelength": 1.6,
-    "lines.linewidth": 1.2,
-    "lines.solid_capstyle": "round",
-    "text.color": INK,
-})
+plt.rcParams.update(
+    {
+        "figure.dpi": 150,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.02,
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
+        "font.size": 8,
+        "axes.titlesize": 8.5,
+        "axes.labelsize": 8,
+        "axes.linewidth": 0.6,
+        "axes.edgecolor": INK,
+        "axes.labelcolor": INK,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.grid": True,
+        "grid.color": "#D9D9D9",
+        "grid.linewidth": 0.4,
+        "xtick.labelsize": 7.5,
+        "ytick.labelsize": 7.5,
+        "xtick.color": INK,
+        "ytick.color": INK,
+        "xtick.major.width": 0.6,
+        "ytick.major.width": 0.6,
+        "xtick.major.size": 2.5,
+        "ytick.major.size": 2.5,
+        "legend.fontsize": 7.5,
+        "legend.frameon": False,
+        "legend.handlelength": 1.6,
+        "lines.linewidth": 1.2,
+        "lines.solid_capstyle": "round",
+        "text.color": INK,
+    }
+)
 
 
 def save(fig, name):
@@ -116,8 +120,16 @@ def save(fig, name):
 
 
 def panel(ax, text):
-    ax.text(-0.13, 1.05, text, transform=ax.transAxes, fontsize=9,
-            fontweight="bold", va="bottom", ha="left")
+    ax.text(
+        -0.13,
+        1.05,
+        text,
+        transform=ax.transAxes,
+        fontsize=9,
+        fontweight="bold",
+        va="bottom",
+        ha="left",
+    )
 
 
 def rolling(y, w):
@@ -126,11 +138,13 @@ def rolling(y, w):
     if len(y) < w or w < 2:
         return y
     pad = w // 2
-    return np.convolve(np.pad(y, pad, mode="edge"), np.ones(w) / w,
-                       mode="same")[pad:pad + len(y)]
+    return np.convolve(np.pad(y, pad, mode="edge"), np.ones(w) / w, mode="same")[
+        pad : pad + len(y)
+    ]
 
 
 # ── data loaders ─────────────────────────────────────────────────────────────
+
 
 def load_baselines(trip="forward"):
     """Constant-notch frontier measured by rl/run_baselines.py."""
@@ -140,8 +154,8 @@ def load_baselines(trip="forward"):
     with open(path) as f:
         recs = sorted(json.load(f)["records"], key=lambda r: r["notch"])
     return {
-        "notch":  np.array([r["notch"] for r in recs]),
-        "steps":  np.array([r["steps"] for r in recs], float),
+        "notch": np.array([r["notch"] for r in recs]),
+        "steps": np.array([r["steps"] for r in recs], float),
         "energy": np.array([r["energy_kwh"] for r in recs], float),
     }
 
@@ -161,26 +175,31 @@ def load_profile(trip="forward"):
         for row in reader:
             for k, v in row.items():
                 cols.setdefault(k, []).append(v)
-    out = {"pos": np.array([float(v) for v in cols["position_m"]]),
-           "speed": np.array([float(v) for v in cols["speed_mps"]]),
-           "notch": np.array([int(v) for v in cols["notch"]])}
+    out = {
+        "pos": np.array([float(v) for v in cols["position_m"]]),
+        "speed": np.array([float(v) for v in cols["speed_mps"]]),
+        "notch": np.array([int(v) for v in cols["notch"]]),
+    }
     for opt, cast in (("energy_kwh_cum", float), ("time_s", float)):
         if opt in cols:
-            out[opt.replace("energy_kwh_cum", "energy").replace("time_s", "time")] = \
+            out[opt.replace("energy_kwh_cum", "energy").replace("time_s", "time")] = (
                 np.array([cast(v) for v in cols[opt]])
+            )
     return out
 
 
 def load_links():
     cum, spd, grade = [0.0], [], []
     with open(LINKS_FILE) as f:
-        f.readline(); f.readline()
+        f.readline()
+        f.readline()
         for line in f:
             p = line.split()
             if len(p) < 8:
                 continue
             cum.append(cum[-1] + float(p[3]))
-            spd.append(float(p[4])); grade.append(float(p[6]))
+            spd.append(float(p[4]))
+            grade.append(float(p[6]))
     return np.array(cum), np.array(spd), np.array(grade)
 
 
@@ -194,15 +213,17 @@ def load_training(trip="forward"):
     order (a training-progress axis, not a per-worker episode index).
     """
     pattern = "train_return_*.log" if trip == "return" else "train_run_*.log"
-    logs = sorted(glob.glob(os.path.join(_REPO, "logs", pattern)),
-                  key=os.path.getmtime)
+    logs = sorted(glob.glob(os.path.join(_REPO, "logs", pattern)), key=os.path.getmtime)
     if not logs:
         return None
 
-    ep_re = re.compile(r"Epoch #(\d+):.*?test_reward:\s*(-?[\d.]+).*?best_reward:\s*(-?[\d.]+)")
+    ep_re = re.compile(
+        r"Epoch #(\d+):.*?test_reward:\s*(-?[\d.]+).*?best_reward:\s*(-?[\d.]+)"
+    )
     ce_re = re.compile(
         r"\[(✓ ARRIVED|✗ TIMEOUT)\]\s+ep=\s*(\d+)\s+([\d,]+) steps.*?"
-        r"energy=\s*([\d.]+) kWh\s+reward=\s*([-+]?[\d.]+)")
+        r"energy=\s*([\d.]+) kWh\s+reward=\s*([-+]?[\d.]+)"
+    )
 
     epochs, test_r, best_r = [], [], []
     arrived, steps, energy, ep_reward = [], [], [], []
@@ -224,13 +245,18 @@ def load_training(trip="forward"):
         return None
     return {
         "log": os.path.basename(logs[-1]),
-        "epoch": np.array(epochs), "test": np.array(test_r), "best": np.array(best_r),
-        "arrived": np.array(arrived, bool), "steps": np.array(steps),
-        "energy": np.array(energy), "ep_reward": np.array(ep_reward),
+        "epoch": np.array(epochs),
+        "test": np.array(test_r),
+        "best": np.array(best_r),
+        "arrived": np.array(arrived, bool),
+        "steps": np.array(steps),
+        "energy": np.array(energy),
+        "ep_reward": np.array(ep_reward),
     }
 
 
 # ── 1. did training work? ────────────────────────────────────────────────────
+
 
 def fig_training_progress(trip="forward"):
     d = load_training(trip)
@@ -243,8 +269,9 @@ def fig_training_progress(trip="forward"):
 
     # (a) reward per epoch — the optimiser's own view of progress
     if len(d["epoch"]):
-        ax_r.plot(d["epoch"], d["test"], color=SKY, lw=0.7, alpha=0.9,
-                  label="test reward")
+        ax_r.plot(
+            d["epoch"], d["test"], color=SKY, lw=0.7, alpha=0.9, label="test reward"
+        )
         ax_r.plot(d["epoch"], d["best"], color=BLUE, lw=1.4, label="running best")
         ax_r.set_xlabel("epoch")
         ax_r.legend(loc="lower right")
@@ -258,13 +285,26 @@ def fig_training_progress(trip="forward"):
     # (b) trip energy per training episode — the actual objective
     if len(n):
         ax_e.plot(n, d["energy"], color=ORANGE, lw=0.35, alpha=0.35)
-        ax_e.plot(n, rolling(d["energy"], w), color=ORANGE, lw=1.4,
-                  label=f"rolling mean ({w})")
+        ax_e.plot(
+            n,
+            rolling(d["energy"], w),
+            color=ORANGE,
+            lw=1.4,
+            label=f"rolling mean ({w})",
+        )
         if base is not None:
-            eco = int(np.argmin(np.where(base["steps"] <= DEADLINE_STEPS,
-                                         base["energy"], np.inf)))
-            ax_e.axhline(base["energy"][eco], color=GREY, lw=0.8, ls=(0, (4, 2)),
-                         label=f"best on-time constant notch (N{base['notch'][eco]})")
+            eco = int(
+                np.argmin(
+                    np.where(base["steps"] <= DEADLINE_STEPS, base["energy"], np.inf)
+                )
+            )
+            ax_e.axhline(
+                base["energy"][eco],
+                color=GREY,
+                lw=0.8,
+                ls=(0, (4, 2)),
+                label=f"best on-time constant notch (N{base['notch'][eco]})",
+            )
         ax_e.legend(loc="upper right")
     ax_e.set_xlabel("training episode")
     ax_e.set_ylabel("trip energy (kWh)")
@@ -276,10 +316,17 @@ def fig_training_progress(trip="forward"):
         ax_t.plot(n, d["steps"], color=BLUE, lw=0.35, alpha=0.35)
         ax_t.plot(n, rolling(d["steps"], w), color=BLUE, lw=1.4)
         ax_t.axhline(DEADLINE_STEPS, color=VERM, lw=0.9, ls=(0, (4, 2)))
-        ax_t.annotate("deadline", (0.99, DEADLINE_STEPS),
-                      xycoords=("axes fraction", "data"), xytext=(0, 3),
-                      textcoords="offset points", ha="right", va="bottom",
-                      fontsize=6.5, color=VERM)
+        ax_t.annotate(
+            "deadline",
+            (0.99, DEADLINE_STEPS),
+            xycoords=("axes fraction", "data"),
+            xytext=(0, 3),
+            textcoords="offset points",
+            ha="right",
+            va="bottom",
+            fontsize=6.5,
+            color=VERM,
+        )
     ax_t.set_xlabel("training episode")
     ax_t.set_ylabel("trip time (s)")
     ax_t.set_title("Trip time settles under the deadline", pad=5)
@@ -287,8 +334,7 @@ def fig_training_progress(trip="forward"):
 
     # (d) arrival rate — did it ever stop timing out?
     if len(n):
-        ax_a.plot(n, 100 * rolling(d["arrived"].astype(float), w),
-                  color=GREEN, lw=1.4)
+        ax_a.plot(n, 100 * rolling(d["arrived"].astype(float), w), color=GREEN, lw=1.4)
         ax_a.set_ylim(-4, 104)
     ax_a.set_xlabel("training episode")
     ax_a.set_ylabel("arrivals (%, rolling)")
@@ -302,6 +348,7 @@ def fig_training_progress(trip="forward"):
 
 # ── 2. is the policy any good? ───────────────────────────────────────────────
 
+
 def fig_energy_time_tradeoff():
     trips = [(t, load_baselines(t)) for t in ("forward", "return")]
     trips = [(t, b) for t, b in trips if b is not None]
@@ -310,39 +357,66 @@ def fig_energy_time_tradeoff():
 
     fig, axes = plt.subplots(1, len(trips), figsize=(COL2, 2.9))
     axes = np.atleast_1d(axes)
-    titles = {"forward": "Toshkent $\\rightarrow$ Ho'jakent (net $+181$ m)",
-              "return":  "Ho'jakent $\\rightarrow$ Toshkent (net $-181$ m)"}
+    titles = {
+        "forward": "Toshkent $\\rightarrow$ Ho'jakent (net $+181$ m)",
+        "return": "Ho'jakent $\\rightarrow$ Toshkent (net $-181$ m)",
+    }
 
     for ax, (trip, base), lab in zip(axes, trips, "ab"):
         order = np.argsort(base["steps"])
         s, e, n = base["steps"][order], base["energy"][order], base["notch"][order]
 
-        ax.axvspan(DEADLINE_STEPS, max(s.max(), DEADLINE_STEPS) * 1.06,
-                   color=VERM, alpha=0.06, lw=0)
+        ax.axvspan(
+            DEADLINE_STEPS,
+            max(s.max(), DEADLINE_STEPS) * 1.06,
+            color=VERM,
+            alpha=0.06,
+            lw=0,
+        )
         ax.axvline(DEADLINE_STEPS, color=VERM, lw=0.8, ls=(0, (4, 2)))
-        ax.annotate("deadline", (DEADLINE_STEPS, 0.02),
-                    xycoords=("data", "axes fraction"), xytext=(-3, 0),
-                    textcoords="offset points", rotation=90, ha="right",
-                    va="bottom", fontsize=6.5, color=VERM)
+        ax.annotate(
+            "deadline",
+            (DEADLINE_STEPS, 0.02),
+            xycoords=("data", "axes fraction"),
+            xytext=(-3, 0),
+            textcoords="offset points",
+            rotation=90,
+            ha="right",
+            va="bottom",
+            fontsize=6.5,
+            color=VERM,
+        )
 
-        ax.plot(s, e, "-", color=GREY, lw=1.0, zorder=2,
-                label="constant notch")
-        ax.scatter(s, e, s=26, color="white", edgecolors=INK, linewidths=0.9,
-                   zorder=3)
+        ax.plot(s, e, "-", color=GREY, lw=1.0, zorder=2, label="constant notch")
+        ax.scatter(s, e, s=26, color="white", edgecolors=INK, linewidths=0.9, zorder=3)
         # alternate the label side: the frontier bunches at the fast end
         for i, (ni, si, ei) in enumerate(zip(n, s, e)):
             dx, ha = (-7, "right") if i % 2 else (7, "left")
-            ax.annotate(f"N{ni}", (si, ei), textcoords="offset points",
-                        xytext=(dx, 1), ha=ha, va="center", fontsize=6.5,
-                        color=GREY)
+            ax.annotate(
+                f"N{ni}",
+                (si, ei),
+                textcoords="offset points",
+                xytext=(dx, 1),
+                ha=ha,
+                va="center",
+                fontsize=6.5,
+                color=GREY,
+            )
 
         prof = load_profile(trip)
         if prof is not None and "energy" in prof and "time" in prof:
-            ax.scatter([prof["time"][-1]], [prof["energy"][-1]], s=44,
-                       color=BLUE, marker="o", zorder=5, edgecolors="white",
-                       linewidths=0.9,
-                       label=f"RL policy ({prof['energy'][-1]:.0f} kWh, "
-                             f"{prof['time'][-1]:,.0f} s)")
+            ax.scatter(
+                [prof["time"][-1]],
+                [prof["energy"][-1]],
+                s=44,
+                color=BLUE,
+                marker="o",
+                zorder=5,
+                edgecolors="white",
+                linewidths=0.9,
+                label=f"RL policy ({prof['energy'][-1]:.0f} kWh, "
+                f"{prof['time'][-1]:,.0f} s)",
+            )
         ax.legend(loc="upper right")
         ax.set_xlabel("trip time (s)")
         if lab == "a":
@@ -356,6 +430,7 @@ def fig_energy_time_tradeoff():
 
 # ── 3. what does the policy do? ──────────────────────────────────────────────
 
+
 def fig_speed_profile(trip="forward"):
     prof = load_profile(trip)
     if prof is None:
@@ -364,12 +439,23 @@ def fig_speed_profile(trip="forward"):
     km = prof["pos"] / 1000.0
     cum_km = cum[1:] / 1000.0
 
-    fig, axes = plt.subplots(3, 1, figsize=(COL2, 4.4), sharex=True,
-                             gridspec_kw={"height_ratios": [2.0, 1.0, 1.0],
-                                          "hspace": 0.12})
+    fig, axes = plt.subplots(
+        3,
+        1,
+        figsize=(COL2, 4.4),
+        sharex=True,
+        gridspec_kw={"height_ratios": [2.0, 1.0, 1.0], "hspace": 0.12},
+    )
 
-    axes[0].step(cum_km, lim, where="post", color=VERM, lw=0.8, ls=(0, (4, 2)),
-                 label="speed limit")
+    axes[0].step(
+        cum_km,
+        lim,
+        where="post",
+        color=VERM,
+        lw=0.8,
+        ls=(0, (4, 2)),
+        label="speed limit",
+    )
     axes[0].plot(km, prof["speed"], color=BLUE, lw=0.9, label="train speed")
     axes[0].set_ylabel("speed (m s$^{-1}$)")
     axes[0].set_ylim(0, max(lim.max(), prof["speed"].max()) * 1.12)
@@ -379,16 +465,17 @@ def fig_speed_profile(trip="forward"):
     # Raw sampled notch is intentionally noisy (the deployable policy is
     # stochastic); the rolling median exposes the terrain-driven trend.
     axes[1].step(km, prof["notch"], where="post", color=PURPLE, lw=0.5, alpha=0.45)
-    axes[1].fill_between(km, prof["notch"], step="post", color=PURPLE,
-                         alpha=0.12, lw=0)
+    axes[1].fill_between(km, prof["notch"], step="post", color=PURPLE, alpha=0.12, lw=0)
     w = 15
     if len(prof["notch"]) >= w:
         pad = w // 2
         padded = np.pad(prof["notch"].astype(float), pad, mode="edge")
-        trend = np.array([np.median(padded[i:i + w])
-                          for i in range(len(prof["notch"]))])
-        axes[1].plot(km, trend, color=PURPLE, lw=1.3,
-                     label=f"rolling median ({w} decisions)")
+        trend = np.array(
+            [np.median(padded[i : i + w]) for i in range(len(prof["notch"]))]
+        )
+        axes[1].plot(
+            km, trend, color=PURPLE, lw=1.3, label=f"rolling median ({w} decisions)"
+        )
         axes[1].legend(loc="upper right")
     axes[1].set_ylabel("notch")
     axes[1].set_ylim(-0.4, 8.4)
@@ -408,6 +495,7 @@ def fig_speed_profile(trip="forward"):
 
 # ── 4. where does the energy go? ─────────────────────────────────────────────
 
+
 def fig_energy_usage(trip="forward"):
     prof = load_profile(trip)
     if prof is None or "energy" not in prof:
@@ -416,17 +504,27 @@ def fig_energy_usage(trip="forward"):
     km = prof["pos"] / 1000.0
     e = prof["energy"]
 
-    fig, axes = plt.subplots(2, 1, figsize=(COL2, 3.6), sharex=True,
-                             gridspec_kw={"height_ratios": [1.4, 1.0],
-                                          "hspace": 0.14})
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(COL2, 3.6),
+        sharex=True,
+        gridspec_kw={"height_ratios": [1.4, 1.0], "hspace": 0.14},
+    )
 
     # (a) cumulative energy, against the constant-rate line. Deviation from the
     # straight line IS the terrain story: above it the policy is paying for a
     # climb, below it it is coasting.
     axes[0].plot(km, e, color=ORANGE, lw=1.4, label="cumulative energy")
     axes[0].fill_between(km, e, color=ORANGE, alpha=0.12, lw=0)
-    axes[0].plot([0, km[-1]], [0, e[-1]], color=GREY, lw=0.8, ls=(0, (4, 2)),
-                 label=f"uniform rate ({e[-1] / km[-1]:.1f} kWh km$^{{-1}}$)")
+    axes[0].plot(
+        [0, km[-1]],
+        [0, e[-1]],
+        color=GREY,
+        lw=0.8,
+        ls=(0, (4, 2)),
+        label=f"uniform rate ({e[-1] / km[-1]:.1f} kWh km$^{{-1}}$)",
+    )
     axes[0].set_ylabel("energy (kWh)")
     axes[0].legend(loc="upper left")
     axes[0].set_title(f"Total {e[-1]:.0f} kWh over {km[-1]:.1f} km", pad=5)
@@ -442,17 +540,29 @@ def fig_energy_usage(trip="forward"):
             lo = e[sel[0] - 1] if sel[0] > 0 else 0.0
             per_km[b] = e[sel[-1]] - lo
     centres = bins[:-1] + 0.5
-    axes[1].bar(centres, per_km, width=0.9, color=ORANGE, alpha=0.75, lw=0,
-                label="energy per km")
+    axes[1].bar(
+        centres,
+        per_km,
+        width=0.9,
+        color=ORANGE,
+        alpha=0.75,
+        lw=0,
+        label="energy per km",
+    )
     axes[1].set_ylabel("kWh km$^{-1}$", color=ORANGE)
     axes[1].tick_params(axis="y", colors=ORANGE)
 
     ax_g = axes[1].twinx()
     ax_g.grid(False)
     cum_km = cum[1:] / 1000.0
-    grade_km = np.array([grade[(cum_km >= b) & (cum_km < b + 1)].mean()
-                         if np.any((cum_km >= b) & (cum_km < b + 1)) else np.nan
-                         for b in bins[:-1]])
+    grade_km = np.array(
+        [
+            grade[(cum_km >= b) & (cum_km < b + 1)].mean()
+            if np.any((cum_km >= b) & (cum_km < b + 1))
+            else np.nan
+            for b in bins[:-1]
+        ]
+    )
     ax_g.plot(centres, grade_km, color=INK, lw=1.0, label="mean grade")
     ax_g.axhline(0, color=INK, lw=0.4, alpha=0.5)
     ax_g.set_ylabel("mean grade (%)")
@@ -469,20 +579,37 @@ def fig_energy_usage(trip="forward"):
 
 
 FIGURES = [
-    ("training progress (forward)", lambda: fig_training_progress("forward"),
-     "python rl/train.py"),
-    ("training progress (return)", lambda: fig_training_progress("return"),
-     "python rl/train_return.py"),
-    ("energy-time frontier", fig_energy_time_tradeoff,
-     "python rl/run_baselines.py"),
-    ("speed profile (forward)", lambda: fig_speed_profile("forward"),
-     "python rl/evaluate.py --stochastic"),
-    ("speed profile (return)", lambda: fig_speed_profile("return"),
-     "python rl/evaluate.py --stochastic --return-trip"),
-    ("energy usage (forward)", lambda: fig_energy_usage("forward"),
-     "python rl/evaluate.py --stochastic"),
-    ("energy usage (return)", lambda: fig_energy_usage("return"),
-     "python rl/evaluate.py --stochastic --return-trip"),
+    (
+        "training progress (forward)",
+        lambda: fig_training_progress("forward"),
+        "python rl/train.py",
+    ),
+    (
+        "training progress (return)",
+        lambda: fig_training_progress("return"),
+        "python rl/train_return.py",
+    ),
+    ("energy-time frontier", fig_energy_time_tradeoff, "python rl/run_baselines.py"),
+    (
+        "speed profile (forward)",
+        lambda: fig_speed_profile("forward"),
+        "python rl/evaluate.py --stochastic",
+    ),
+    (
+        "speed profile (return)",
+        lambda: fig_speed_profile("return"),
+        "python rl/evaluate.py --stochastic --return-trip",
+    ),
+    (
+        "energy usage (forward)",
+        lambda: fig_energy_usage("forward"),
+        "python rl/evaluate.py --stochastic",
+    ),
+    (
+        "energy usage (return)",
+        lambda: fig_energy_usage("return"),
+        "python rl/evaluate.py --stochastic --return-trip",
+    ),
 ]
 
 
