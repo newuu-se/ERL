@@ -1,5 +1,9 @@
 """
-Measure the constant-notch energy/time frontier on the CURRENT physics + data.
+Measure the constant-target energy/time frontier on the CURRENT physics + data.
+
+A constant-target policy holds one action for the whole trip, e.g. 70 % of the
+speed limit everywhere. Coasting alone (action 0) never leaves the start, so it
+is not measured.
 
 Run after any physics or input-data change. The frontier is the reference every
 result is compared against, so it must be re-measured whenever the simulator or
@@ -11,8 +15,8 @@ plots can never silently disagree with the measurement.
 
 Usage:
     source venv/bin/activate
-    python rl/run_baselines.py [notches...]                 # A→B trip, default: 2 3 4 5 6 8
-    python rl/run_baselines.py --return-trip [notches...]   # B→A trip (train_return.dat)
+    python rl/run_baselines.py [actions...]                 # A→B trip, default: 1-6 (50-100 %)
+    python rl/run_baselines.py --return-trip [actions...]   # B→A trip (train_return.dat)
 """
 
 import argparse
@@ -21,11 +25,19 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from rl.train_env import NeTrainSimEnv, TRAINS_FILE, TRAINS_FILE_RETURN, LINKS_FILE
+from rl.train_env import (
+    NeTrainSimEnv,
+    TRAINS_FILE,
+    TRAINS_FILE_RETURN,
+    LINKS_FILE,
+    N_ACTIONS,
+    TARGET_FRACTIONS,
+    action_label,
+)
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_DIR = os.path.join(_REPO, "results")
-DEFAULT_NOTCHES = list(range(1, 9))
+DEFAULT_ACTIONS = list(range(1, N_ACTIONS))
 
 
 def baselines_path(trip: str) -> str:
@@ -48,17 +60,21 @@ def load_baselines(trip: str) -> dict:
         return json.load(f)
 
 
-def run_constant_notch(notch: int, trains_file: str = TRAINS_FILE):
+def run_constant_action(action: int, trains_file: str = TRAINS_FILE):
     env = NeTrainSimEnv(trains_file=trains_file)
     env.reset()
     terminated = truncated = False
     max_step_energy = 0.0
     while not (terminated or truncated):
-        _, _, terminated, truncated, _ = env.step(notch)
-        max_step_energy = max(max_step_energy, float(env._last_state["energy_kwh"]))
+        _, _, terminated, truncated, _ = env.step(action)
+        max_step_energy = max(max_step_energy, env._last_step_energy_kwh)
+    # energy = energy consumed, the quantity the RL optimises. Regenerated and net
+    # energy are recorded for reporting only.
     steps, energy = env._step_count, env._cum_energy_kwh
+    regenerated = float(env._last_state["energy_regenerated_kwh_cum"])
+    net = float(env._last_state["energy_net_kwh_cum"])
     env.close()
-    return steps, energy, max_step_energy, terminated
+    return steps, energy, regenerated, net, max_step_energy, terminated
 
 
 def main():
@@ -68,7 +84,7 @@ def main():
         action="store_true",
         help="measure the B→A return trip (train_return.dat)",
     )
-    parser.add_argument("notches", nargs="*", type=int, default=DEFAULT_NOTCHES)
+    parser.add_argument("actions", nargs="*", type=int, default=DEFAULT_ACTIONS)
     args = parser.parse_args()
 
     trip = "return" if args.return_trip else "forward"
@@ -78,31 +94,46 @@ def main():
         f"trip: {'B→A return' if args.return_trip else 'A→B forward'}  "
         f"({os.path.basename(trains_file)})"
     )
+    # consumed is what the RL uses; regenerated and net (*) are reported only
     print(
-        f"{'notch':>5}  {'steps(s)':>9}  {'energy(kWh)':>12}  "
-        f"{'maxE/step':>9}  {'arrived':>7}"
+        f"{'target':>6}  {'steps(s)':>9}  {'consumed(kWh)':>13}  {'regen*':>7}  "
+        f"{'net*':>7}  {'maxE/step':>9}  {'arrived':>7}"
     )
 
     records = []
-    for n in sorted(args.notches):
-        steps, energy, max_e, arrived = run_constant_notch(n, trains_file)
+    for a in sorted(args.actions):
+        steps, energy, regenerated, net, max_e, arrived = run_constant_action(
+            a, trains_file
+        )
         records.append(
             {
-                "notch": n,
+                "action": a,
+                "target_frac": TARGET_FRACTIONS[a],
                 "steps": steps,
-                "energy_kwh": round(energy, 2),
+                "energy_kwh": round(energy, 2),  # consumed
+                # reported only, not used by the RL or the plots
+                "energy_regenerated_kwh": round(regenerated, 2),
+                "energy_net_kwh": round(net, 2),
                 "max_step_energy_kwh": round(max_e, 3),
                 "arrived": bool(arrived),
             }
         )
-        print(f"{n:>5}  {steps:>9,}  {energy:>12.2f}  {max_e:>9.3f}  {str(arrived):>7}")
+        print(
+            f"{action_label(a):>6}  {steps:>9,}  {energy:>13.2f}  {regenerated:>7.2f}  "
+            f"{net:>7.2f}  {max_e:>9.3f}  {str(arrived):>7}"
+        )
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     payload = {
         "trip": trip,
         "trains_file": os.path.basename(trains_file),
         "links_file": os.path.basename(LINKS_FILE),
-        "physics": "GOST resistance, regenerative braking removed",
+        "physics": (
+            "newuu-se/NeTrainSim main + speed control: Grebenyuk (1987) rolling/air "
+            "resistance + grade + curve resistance 700/R N/kN (curvature in % = 100/R); "
+            "regenerative braking simulated but not credited: energy_kwh is energy "
+            "consumed, regenerated/net are reported only"
+        ),
         "records": records,
     }
     out = baselines_path(trip)

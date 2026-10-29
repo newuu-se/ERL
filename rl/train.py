@@ -14,7 +14,7 @@ is not distorted and arrival/timeout signals reach the early steps.
 
 Run:
     source venv/bin/activate
-    python rl/train.py 2>&1 | tee train_log.txt
+    python rl/train.py 2>&1 | tee logs/train_run_$(date +%Y%m%d_%H%M%S).log
 """
 
 import os
@@ -83,8 +83,8 @@ STEP_PER_EPOCH = 3_000  # env-steps/epoch. With CONTROL_INTERVAL=15 an episode i
 
 # PPO / network architecture — single source of truth, also imported by evaluate.py
 # so the eval-time policy can never drift from the trained one.
-OBS_SHAPE = (9,)  # 7 physics features + time_frac + behind_frac (see train_env.py)
-N_ACTIONS = 9
+OBS_SHAPE = NeTrainSimEnv.observation_space.shape  # (23,), see train_env.py
+N_ACTIONS = NeTrainSimEnv.action_space.n  # coast + 6 target speeds
 EPS_CLIP = 0.2  # clip ratio — prevents large destructive updates
 VF_COEF = 0.5  # value-loss weight
 GAE_LAMBDA = 0.95  # GAE smoothing for advantage estimates
@@ -191,7 +191,7 @@ def run_training(
         f"  Algorithm    : PPO  (eps_clip=0.2, {_ent_desc}, discount={DISCOUNT}, repeat={REPEAT_PER_COLLECT}×)"
     )
     print(
-        f"  Reward       : -{W_ENERGY:g}·energy  -{W_PACE:g}·pace  -{W_OVERSPEED:g}·overspeed  -{W_SMOOTH:g}·|Δnotch|  +{ARRIVAL_BONUS:.0f} arrival (deadline {DEADLINE_STEPS} steps)"
+        f"  Reward       : -{W_ENERGY:g}·energy  -{W_PACE:g}·pace  -{W_OVERSPEED:g}·overspeed  -{W_SMOOTH:g}·|Δaction|  +{ARRIVAL_BONUS:.0f} arrival (deadline {DEADLINE_STEPS} steps)"
     )
     print("━" * 65 + "\n")
 

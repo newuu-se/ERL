@@ -1,259 +1,251 @@
 """
-Evaluate a trained RL policy on one full A→B trip and export the notch
-profile + physics state to a CSV file.
+Evaluate a trained policy on one full trip and save what it did, second by second.
 
-The output CSV can be loaded into NeTrainSim (or plotted) to compare the
-RL energy profile against a baseline (e.g. constant notch or human driver).
+Writes two files (the return trip writes the same names under results/return/):
+
+  results/action_profile[_stochastic].csv   one row per simulated second:
+      time, position, x/y, speed, speed limit, the speed the driver followed,
+      action (coast / target), the notch the simulator chose, grade, and the
+      cumulative energy consumed (used by the RL), regenerated and net (reported only)
+  results/eval_summary[_stochastic].json    trip totals: time, energy, arrival,
+      deadline, reward, and how many seconds each action was used
+
+rl/make_plots.py reads both.
 
 Usage:
     source venv/bin/activate
-    python rl/evaluate.py                                      # uses latest checkpoint
-    python rl/evaluate.py --checkpoint checkpoints/policy_epoch050.pth
-    python rl/evaluate.py --checkpoint checkpoints/policy_final.pth
+    python rl/evaluate.py --stochastic                  # latest checkpoint, sampled actions
+    python rl/evaluate.py                               # argmax actions
+    python rl/evaluate.py --checkpoint checkpoints/policy_best.pth
+    python rl/evaluate.py --stochastic --return-trip    # B→A trip, checkpoints/return/
+    python rl/evaluate.py --stochastic --seed 1         # reproducible sampling
 """
 
 import argparse
 import csv
+import json
 import os
 import sys
 
-import torch
 import numpy as np
+import torch
 from tianshou.policy import PPOPolicy
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from rl.train_env import (
-    NeTrainSimEnv,
-    NODES_FILE,
-    LINKS_FILE,
-    TRAINS_FILE,
-    TRAINS_FILE_RETURN,
-    DEADLINE_STEPS,
-)
+from rl.train import DEVICE
 
 # Reuse training's policy factory + device so the eval policy can never drift
 # from the trained one (same architecture and hyperparameters).
-from rl.train import build_policy as build_ppo_policy, DEVICE
+from rl.train import build_policy as build_ppo_policy
+from rl.train_env import (
+    DEADLINE_STEPS,
+    LINKS_FILE,
+    N_ACTIONS,
+    NODES_FILE,
+    TRAINS_FILE,
+    TRAINS_FILE_RETURN,
+    NeTrainSimEnv,
+    action_label,
+)
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(_BASE, "..", "results")
 CHECKPOINT_DIR = os.path.join(_BASE, "..", "checkpoints")
 # Return trip (B→A): separate checkpoints + outputs (see rl/train_return.py)
-OUTPUT_DIR_RETURN = os.path.join(_BASE, "..", "results", "return")
-CHECKPOINT_DIR_RETURN = os.path.join(_BASE, "..", "checkpoints", "return")
+OUTPUT_DIR_RETURN = os.path.join(OUTPUT_DIR, "return")
+CHECKPOINT_DIR_RETURN = os.path.join(CHECKPOINT_DIR, "return")
+
+CSV_FIELDS = [
+    "time_s",
+    "position_m",
+    "x_m",
+    "y_m",
+    "speed_mps",
+    "speed_limit_mps",  # the limit the whole train must obey
+    "applied_cap_mps",  # the speed the driver followed (target, or the limit when coasting)
+    "action",
+    "target",  # "coast" or e.g. "70%"
+    "notch",  # chosen by the simulator, not by the agent
+    "acceleration_mps2",
+    "grade_perc",  # in the direction of travel
+    "energy_consumed_kwh_cum",  # used by the RL
+    "energy_regenerated_kwh_cum",  # reported only
+    "energy_net_kwh_cum",  # reported only
+]
 
 
-def load_path_coordinates() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Build cumulative-distance → (x, y) lookup along the route.
-    Returns three parallel arrays (cum_pos_m, x_m, y_m) so np.interp can
-    map any position-along-path to (x_m, y_m) by linear interpolation.
-    """
+def load_route_xy() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map distance along the route (forward direction, from node 1) to (x, y).
+
+    Returns three parallel arrays (chainage_m, x_m, y_m) for np.interp. The links
+    file lists the route's links in order; the node file's second line holds the
+    x and y scale factors that convert its coordinates to metres."""
     nodes: dict[int, tuple[float, float]] = {}
     with open(NODES_FILE) as f:
-        f.readline()  # header line
-        f.readline()  # count / scales line
+        f.readline()  # description
+        _count, x_scale, y_scale = (float(v) for v in f.readline().split()[:3])
         for line in f:
             parts = line.split()
-            if len(parts) < 3:
-                continue
-            nid = int(parts[0])
-            x = float(parts[1])
-            y = float(parts[2])
-            nodes[nid] = (x, y)
+            if len(parts) >= 3:
+                nodes[int(parts[0])] = (
+                    float(parts[1]) * x_scale,
+                    float(parts[2]) * y_scale,
+                )
 
-    # Walk links in order; cumulative distance at each visited node.
-    cum, xs, ys = [0.0], [], []
-    first_id = None
+    chainage, xs, ys = [0.0], [], []
     with open(LINKS_FILE) as f:
-        f.readline()  # header
+        f.readline()  # description
         f.readline()  # count / scales
         for line in f:
             parts = line.split()
             if len(parts) < 5:
                 continue
-            from_id = int(parts[1])
-            to_id = int(parts[2])
-            length = float(parts[3])
-            if first_id is None:
-                first_id = from_id
+            from_id, to_id, length = int(parts[1]), int(parts[2]), float(parts[3])
+            if not xs:
                 xs.append(nodes[from_id][0])
                 ys.append(nodes[from_id][1])
-            cum.append(cum[-1] + length)
+            chainage.append(chainage[-1] + length)
             xs.append(nodes[to_id][0])
             ys.append(nodes[to_id][1])
-    return np.array(cum), np.array(xs), np.array(ys)
+    return np.array(chainage), np.array(xs), np.array(ys)
 
 
 def find_latest_checkpoint(checkpoint_dir: str = CHECKPOINT_DIR) -> str:
+    """policy_best.pth, else policy_final.pth, else the highest epoch."""
     if not os.path.isdir(checkpoint_dir):
         raise FileNotFoundError(f"No checkpoints directory found at {checkpoint_dir}")
     files = sorted(f for f in os.listdir(checkpoint_dir) if f.endswith(".pth"))
     if not files:
         raise FileNotFoundError(f"No .pth checkpoint files found in {checkpoint_dir}")
-    if "policy_best.pth" in files:
-        return os.path.join(checkpoint_dir, "policy_best.pth")
-    if "policy_final.pth" in files:
-        return os.path.join(checkpoint_dir, "policy_final.pth")
+    for name in ("policy_best.pth", "policy_final.pth"):
+        if name in files:
+            return os.path.join(checkpoint_dir, name)
     return os.path.join(checkpoint_dir, files[-1])
 
 
-def build_policy(checkpoint_path: str) -> PPOPolicy:
+def load_policy(checkpoint_path: str) -> PPOPolicy:
     policy, _actor, _critic, _optim = build_ppo_policy(DEVICE)
-    state_dict = torch.load(checkpoint_path, map_location=DEVICE)
-    policy.load_state_dict(state_dict)
+    policy.load_state_dict(torch.load(checkpoint_path, map_location=DEVICE))
     policy.eval()
     print(f"Loaded checkpoint: {checkpoint_path}")
     return policy
 
 
-def eval_policy(
-    policy: PPOPolicy, trains_file: str = TRAINS_FILE, stochastic: bool = False
-) -> dict:
-    """Run one greedy/sampled episode and return summary stats only (no CSV).
+def choose_action(policy: PPOPolicy, obs: np.ndarray, stochastic: bool) -> int:
+    """Argmax of the action probabilities, or a sample from them (--stochastic).
 
-    Currently unused by any script in the tree — it was the campaign's scoring
-    hook. Kept because it is the cheapest way to score a checkpoint
-    programmatically (run_episode writes a CSV; this does not)."""
-    env = NeTrainSimEnv(trains_file=trains_file)
-    obs, _ = env.reset()
-    terminated = truncated = False
-    notch_hist = [0] * 9
-    while not (terminated or truncated):
-        obs_t = torch.tensor(obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
-        with torch.no_grad():
-            probs, _ = policy.actor(obs_t)
-            probs = probs.squeeze(0)
-            notch = (
-                int(torch.distributions.Categorical(probs).sample())
-                if stochastic
-                else int(probs.argmax().item())
-            )
-        notch_hist[notch] += 1
-        obs, _, terminated, truncated, _ = env.step(notch)
-    energy = float(env._cum_energy_kwh)
-    steps = int(env._step_count)
-    env.close()
-    return {
-        "stochastic": stochastic,
-        "energy_kwh": round(energy, 3),
-        "steps": steps,
-        "arrived": bool(terminated),
-        "on_schedule": bool(terminated and steps <= DEADLINE_STEPS),
-        "lateness_frac": round(max(0.0, steps - DEADLINE_STEPS) / DEADLINE_STEPS, 4),
-        "notch_hist": notch_hist,
-    }
+    For a high-entropy policy the argmax can be unrepresentative (it parks on the
+    single most likely action); sampling reflects how the policy was trained."""
+    obs_t = torch.tensor(obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
+    with torch.no_grad():
+        probs, _ = policy.actor(obs_t)  # the actor outputs probabilities (softmax)
+        probs = probs.squeeze(0)
+    if stochastic:
+        return int(torch.distributions.Categorical(probs=probs).sample())
+    return int(probs.argmax())
 
 
 def run_episode(
     policy: PPOPolicy,
-    output_path: str,
-    stochastic: bool = False,
     trains_file: str = TRAINS_FILE,
+    stochastic: bool = False,
     reverse: bool = False,
-) -> None:
+    verbose: bool = True,
+) -> tuple[list[dict], dict]:
+    """Drive one full trip. Returns (per-second rows, trip summary)."""
     env = NeTrainSimEnv(trains_file=trains_file)
+    env.record_trace = True
     obs, _ = env.reset()
+    chainage, xs, ys = load_route_xy()
 
-    cum_pos, xs, ys = load_path_coordinates()
-    route_len = float(cum_pos[-1])
-
-    rows = []
-    step = 0
-    terminated = False
-    truncated = False
-
-    print("Running evaluation episode...")
-    print(
-        f"{'Step':>6}  {'Pos(m)':>10}  {'X(m)':>12}  {'Y(m)':>12}  "
-        f"{'Speed(m/s)':>10}  {'Notch':>5}  {'CumEnergy':>10}"
-    )
-    print("-" * 80)
-
+    decisions = 0
+    terminated = truncated = False
+    if verbose:
+        print(
+            f"{'Decision':>8}  {'Time(s)':>8}  {'Pos(m)':>9}  {'Speed(m/s)':>10}  "
+            f"{'Action':>6}  {'Consumed(kWh)':>13}"
+        )
     while not (terminated or truncated):
-        # Deterministic (argmax) by default; --stochastic samples from the policy.
-        # NOTE: for a high-entropy policy the argmax can be unrepresentative (its mode
-        # parks at the lowest-energy notch); --stochastic reflects the trained behavior.
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
-        with torch.no_grad():
-            probs, _ = policy.actor(obs_tensor)
-            probs = probs.squeeze(0)
-            notch = (
-                int(torch.distributions.Categorical(probs).sample())
-                if stochastic
-                else int(probs.argmax().item())
+        action = choose_action(policy, obs, stochastic)
+        obs, _, terminated, truncated, _ = env.step(action)
+        decisions += 1
+        if verbose and decisions % 100 == 0:
+            s = env._last_state
+            print(
+                f"{decisions:>8}  {env._step_count:>8}  {float(s['position_m']):>9.0f}  "
+                f"{float(s['speed_mps']):>10.2f}  {action_label(action):>6}  "
+                f"{env._cum_energy_kwh:>13.1f}"
             )
 
-        obs, reward, terminated, truncated, _ = env.step(notch)
+    trace = env.trace
+    last = env._last_state
+    reward = env._episode_reward
+    env.close()
 
-        # NOTE: under action repeat (CONTROL_INTERVAL=15) state is the LAST sim
-        # second of the decision; per-step sums must come from the env, which
-        # accumulates every simulator second (env._cum_energy_kwh).
-        state = env._last_state
-        position_m = float(state["position_m"])
-        speed_mps = float(state["speed_mps"])
-
-        # Interpolate (x, y) at the train's current position along the path.
-        # load_path_coordinates() walks links in FORWARD (node 1→1503) order;
-        # on the return trip position_m counts from node 1503, so map it to the
-        # forward chainage first.
-        route_pos = (route_len - position_m) if reverse else position_m
-        x_m = float(np.interp(route_pos, cum_pos, xs))
-        y_m = float(np.interp(route_pos, cum_pos, ys))
-
+    # The trip's own path length (the train may not use every link in the file).
+    # On the return trip, position counts from the far end, so it is turned into
+    # forward chainage before looking up (x, y).
+    path_len = float(trace[0]["position_m"]) + float(trace[0]["remaining_dist_m"])
+    rows = []
+    for s in trace:
+        pos = float(s["position_m"])
+        chain = path_len - pos if reverse else pos
         rows.append(
             {
-                "time_s": env._step_count,
-                "position_m": round(position_m, 3),
-                "x_m": round(x_m, 3),
-                "y_m": round(y_m, 3),
-                "speed_mps": round(speed_mps, 4),
-                "notch": notch,
-                # Cumulative energy is summed by the env over EVERY simulator second,
-                # so it stays correct under action repeat (the state above is only the
-                # last second of the decision).
-                "energy_kwh_cum": round(env._cum_energy_kwh, 5),
+                "time_s": s["time_s"],
+                "position_m": round(pos, 2),
+                "x_m": round(float(np.interp(chain, chainage, xs)), 2),
+                "y_m": round(float(np.interp(chain, chainage, ys)), 2),
+                "speed_mps": round(float(s["speed_mps"]), 4),
+                "speed_limit_mps": round(float(s["speed_limit_mps"]), 4),
+                "applied_cap_mps": round(float(s["applied_cap_mps"]), 4),
+                "action": s["action"],
+                "target": action_label(s["action"]),
+                "notch": int(s["notch"]),
+                "acceleration_mps2": round(float(s["acceleration_mps2"]), 4),
+                "grade_perc": float(s["grade_perc"]),
+                "energy_consumed_kwh_cum": round(
+                    float(s["energy_consumed_kwh_cum"]), 5
+                ),
+                "energy_regenerated_kwh_cum": round(
+                    float(s["energy_regenerated_kwh_cum"]), 5
+                ),
+                "energy_net_kwh_cum": round(float(s["energy_net_kwh_cum"]), 5),
             }
         )
 
-        step += 1
-        if step % 100 == 0:
-            print(
-                f"{step:>6}  {position_m:>10.1f}  {x_m:>12.1f}  {y_m:>12.1f}  "
-                f"{speed_mps:>10.3f}  {notch:>5}  {env._cum_energy_kwh:>10.3f}"
-            )
+    trip_time = int(rows[-1]["time_s"])
+    seconds_per_action = [0] * N_ACTIONS
+    for r in rows:
+        seconds_per_action[r["action"]] += 1
+    summary = {
+        "trip": "return" if reverse else "forward",
+        "actions": "sampled" if stochastic else "argmax",
+        "arrived": bool(terminated),
+        "trip_time_s": trip_time,
+        "deadline_s": DEADLINE_STEPS,
+        "on_time": bool(terminated and trip_time <= DEADLINE_STEPS),
+        "late_s": max(0, trip_time - DEADLINE_STEPS),
+        "distance_m": round(float(last["position_m"]), 1),
+        "decisions": decisions,
+        "energy_consumed_kwh": round(float(last["energy_consumed_kwh_cum"]), 3),
+        # reported only, never used by the RL
+        "energy_regenerated_kwh": round(float(last["energy_regenerated_kwh_cum"]), 3),
+        "energy_net_kwh": round(float(last["energy_net_kwh_cum"]), 3),
+        "episode_reward": round(reward, 2),
+        "seconds_per_action": {
+            action_label(a): n for a, n in enumerate(seconds_per_action)
+        },
+    }
+    return rows, summary
 
-    # Totals from the env (correct under action-repeat: sums every simulator second,
-    # not just the last one of each control interval).
-    total_energy = env._cum_energy_kwh
-    sim_steps = env._step_count
-    env.close()
 
-    status = "ARRIVED" if terminated else "TIMEOUT"
-    print(
-        f"\n[{status}] decisions={step}  sim_steps={sim_steps}  total_energy={total_energy:.2f} kWh\n"
-    )
-
-    # Write CSV
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    fieldnames = [
-        "time_s",
-        "position_m",
-        "x_m",
-        "y_m",
-        "speed_mps",
-        "notch",
-        "energy_kwh_cum",
-    ]
-    with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"Notch profile saved → {output_path}")
-    print(
-        f"Rows: {len(rows)} (control decisions)  |  Total energy: {total_energy:.2f} kWh  |  sim_steps: {sim_steps}"
-    )
+def eval_policy(
+    policy: PPOPolicy, trains_file: str = TRAINS_FILE, stochastic: bool = False
+) -> dict:
+    """Score a checkpoint programmatically: the trip summary only, no files."""
+    _rows, summary = run_episode(policy, trains_file, stochastic, verbose=False)
+    return summary
 
 
 def main():
@@ -261,51 +253,69 @@ def main():
     parser.add_argument(
         "--checkpoint",
         default=None,
-        help="Path to .pth checkpoint (default: latest in checkpoints/, "
-        "or checkpoints/return/ with --return-trip)",
-    )
-    parser.add_argument(
-        "--output",
-        default=None,
-        help="Output CSV path (default: results/notch_profile.csv, "
-        "results/notch_profile_stochastic.csv with --stochastic, "
-        "or the same names under results/return/ with --return-trip)",
+        help="Path to .pth checkpoint (default: best/final/latest in "
+        "checkpoints/, or checkpoints/return/ with --return-trip)",
     )
     parser.add_argument(
         "--stochastic",
         action="store_true",
-        help="Sample actions from the policy instead of argmax "
-        "(representative for a high-entropy policy)",
+        help="Sample actions from the policy instead of argmax",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for --stochastic sampling (reproducible runs)",
     )
     parser.add_argument(
         "--return-trip",
         action="store_true",
-        help="Evaluate the B→A return trip (train_return.dat, "
+        help="Evaluate the B→A return trip (TRAIN_RETURN_FILE, "
         "checkpoints/return/, results/return/)",
     )
     args = parser.parse_args()
 
+    if args.seed is not None:
+        torch.manual_seed(args.seed)
+
     checkpoint_dir = CHECKPOINT_DIR_RETURN if args.return_trip else CHECKPOINT_DIR
     output_dir = OUTPUT_DIR_RETURN if args.return_trip else OUTPUT_DIR
     trains_file = TRAINS_FILE_RETURN if args.return_trip else TRAINS_FILE
-
     checkpoint = args.checkpoint or find_latest_checkpoint(checkpoint_dir)
-    # make_plots.load_profile() reads notch_profile_stochastic.csv, so the
-    # --stochastic run must write that exact name or the figure is skipped.
-    profile_name = (
-        "notch_profile_stochastic.csv" if args.stochastic else "notch_profile.csv"
-    )
-    output_path = args.output or os.path.join(output_dir, profile_name)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    print(f"Trip: {'B→A return' if args.return_trip else 'A→B forward'}")
-    policy = build_policy(checkpoint)
-    run_episode(
-        policy,
-        output_path,
-        stochastic=args.stochastic,
-        trains_file=trains_file,
-        reverse=args.return_trip,
+    print(
+        f"Trip: {'B→A return' if args.return_trip else 'A→B forward'}  "
+        f"({'sampled' if args.stochastic else 'argmax'} actions)"
+    )
+    policy = load_policy(checkpoint)
+    rows, summary = run_episode(
+        policy, trains_file, args.stochastic, reverse=args.return_trip
+    )
+    summary["checkpoint"] = os.path.relpath(checkpoint)
+
+    # make_plots.py looks for exactly these names
+    suffix = "_stochastic" if args.stochastic else ""
+    os.makedirs(output_dir, exist_ok=True)
+    csv_path = os.path.join(output_dir, f"action_profile{suffix}.csv")
+    json_path = os.path.join(output_dir, f"eval_summary{suffix}.json")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    with open(json_path, "w") as f:
+        json.dump(summary, f, indent=2)
+        f.write("\n")
+
+    status = "ARRIVED" if summary["arrived"] else "TIMEOUT"
+    on_time = "on time" if summary["on_time"] else f"{summary['late_s']:,} s late"
+    print(
+        f"\n[{status}] {summary['trip_time_s']:,} s ({on_time}, deadline {DEADLINE_STEPS:,} s), "
+        f"{summary['decisions']} decisions\n"
+        f"  energy consumed    : {summary['energy_consumed_kwh']:>9.2f} kWh   (used by the RL)\n"
+        f"  energy regenerated : {summary['energy_regenerated_kwh']:>9.2f} kWh   (reported only)\n"
+        f"  net energy         : {summary['energy_net_kwh']:>9.2f} kWh   (reported only)\n"
+        f"\nPer-second profile → {os.path.relpath(csv_path)}  ({len(rows):,} rows)\n"
+        f"Trip summary       → {os.path.relpath(json_path)}"
     )
 
 

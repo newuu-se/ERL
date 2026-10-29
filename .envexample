@@ -1,5 +1,7 @@
 # NeTrainSim defaults
 NETRAINSIM_BIN="/path/to/netrainsim"
+# Where NeTrainSim writes its own trainSummary_*.txt files (default: ~/Documents/NeTrainSim)
+NETRAINSIM_OUTPUT_DIR="/path/to/netrainsim-output"
 
 # Route configuration
 NODE_FILE="/path/to/nodes.bat"

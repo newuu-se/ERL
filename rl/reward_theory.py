@@ -1,10 +1,10 @@
 """
-Closed-form reward analysis of constant-notch policies — the theoretical
+Closed-form reward analysis of constant-target policies — the theoretical
 justification for the reward coefficients.
 
-A constant-notch policy ignores the reward, so its trajectory x_t, and hence its
+A constant-target policy ignores the reward, so its trajectory x_t, and hence its
 episode return under Eq. (reward), is fixed and computable. Writing the return of
-constant notch n as a function of the pace weight w_P:
+constant target n as a function of the pace weight w_P:
 
     R(n; w_P) = -W_ENERGY * E(n)            (total energy, gamma-discounted)
                 - w_P     * Sigma_beta(n)   (behind-schedule fraction, discounted)
@@ -13,23 +13,28 @@ constant notch n as a function of the pace weight w_P:
                 - TIMEOUT_PENALTY otherwise
 
 This is LINEAR in w_P: R(n; w_P) = a(n) - w_P * Sigma_beta(n). The reward-optimal
-constant notch is therefore argmax_n R(n; w_P), and there is a threshold w_P* at
-which the schedule-feasible eco notch (the slowest notch that still arrives by the
-deadline) overtakes the cheaper-but-late notch below it. Computing w_P* tells us,
+constant target is therefore argmax_n R(n; w_P), and there is a threshold w_P* at
+which the schedule-feasible eco target (the slowest target that still arrives by
+the deadline) overtakes the cheaper-but-late target below it. Computing w_P* tells us,
 before any training, the coefficient range for which the reward's optimum is the
 operating point we actually want.
 
-We log each constant notch's per-second trajectory through the interactive
+We log each constant target's per-second trajectory through the interactive
 simulator and reconstruct the return with the exact env reward constants at the
 resolution PPO actually sees: per-second components are summed into
 CONTROL_INTERVAL-second decisions and each decision is weighted by gamma**k
-(DISCOUNT, read from rl.train so the two cannot drift). A constant-notch policy
-has no notch changes, so the smoothness term is identically zero. Aggregating and
+(DISCOUNT, read from rl.train so the two cannot drift). A constant-target policy
+has no action changes, so the smoothness term is identically zero. Aggregating and
 discounting this way matters: PPO sees one discounted return per decision, so an
 undiscounted per-second sum would report a w_P* that is not the return it optimises.
 
 Usage:
-    python rl/reward_theory.py            # both trips → results/theory/ + figure
+    python rl/reward_theory.py            # both trips → results/theory/ + charts
+    python rl/reward_theory.py --replot   # redraw the charts from results/theory/
+
+Charts: results/plots/reward_theory_forward.png and reward_theory_return.png (+ .pdf):
+the constant target the reward prefers at each pace weight, against the targets that
+arrive before the deadline, with the current W_PACE marked.
 """
 
 import csv
@@ -50,17 +55,21 @@ from rl.train_env import (
     CONTROL_INTERVAL,
     W_ENERGY,
     W_OVERSPEED,
+    W_PACE,
     ARRIVAL_BONUS,
     TIMEOUT_PENALTY,
+    N_ACTIONS,
+    TARGET_FRACTIONS,
+    action_label,
 )
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTDIR = os.path.join(_REPO, "results", "theory")
-NOTCHES = list(range(1, 9))  # 0 does not move (full adhesion at standstill)
+ACTIONS = list(range(1, N_ACTIONS))  # 0 = coast, which never leaves the start
 
 
-def log_constant_notch(notch: int, trains_file: str) -> dict:
-    """Drive one constant-notch trip at 1-second resolution; return the per-step
+def log_constant_action(action: int, trains_file: str) -> dict:
+    """Drive one constant-target trip at 1-second resolution; return the per-step
     energy and behind-schedule-fraction sums plus trip summary."""
     env = NeTrainSimEnv(trains_file=trains_file)
     env.reset()
@@ -79,8 +88,8 @@ def log_constant_notch(notch: int, trains_file: str) -> dict:
     terminated = truncated = False
     while not (terminated or truncated):
         # Call the 1-second core directly to get per-second resolution (step()
-        # would repeat the notch CONTROL_INTERVAL times before returning).
-        _, terminated, truncated, e_t = env._sim_step(notch)
+        # would repeat the action CONTROL_INTERVAL times before returning).
+        _, terminated, truncated, e_t = env._sim_step(action)
         st = env._last_state
         pos = float(st["position_m"])
         target = (env._step_count / DEADLINE_STEPS) * TOTAL_ROUTE_LENGTH_M
@@ -106,7 +115,8 @@ def log_constant_notch(notch: int, trains_file: str) -> dict:
     steps = env._step_count
     env.close()
     return {
-        "notch": notch,
+        "action": action,
+        "target_frac": TARGET_FRACTIONS[action],
         "steps": steps,
         "energy_kwh": round(sum_E, 3),
         "sum_beta": round(sum_beta, 4),
@@ -121,7 +131,7 @@ def log_constant_notch(notch: int, trains_file: str) -> dict:
 
 
 def reward_of(rec: dict, w_p: float) -> float:
-    """Discounted episode return of a constant-notch policy, in the units PPO sees."""
+    """Discounted episode return of a constant-target policy, in the units PPO sees."""
     term = ARRIVAL_BONUS if rec["arrived"] else -TIMEOUT_PENALTY
     return (
         -W_ENERGY * rec["disc_energy_kwh"]
@@ -133,22 +143,22 @@ def reward_of(rec: dict, w_p: float) -> float:
 
 def analyze_trip(trip: str):
     trains_file = TRAINS_FILE_RETURN if trip == "return" else TRAINS_FILE
-    print(f"\n=== {trip.upper()} TRIP — logging constant-notch trajectories ===")
+    print(f"\n=== {trip.upper()} TRIP — logging constant-target trajectories ===")
     recs = []
-    for n in NOTCHES:
-        r = log_constant_notch(n, trains_file)
+    for a in ACTIONS:
+        r = log_constant_action(a, trains_file)
         recs.append(r)
         print(
-            f"  notch {n}: {r['steps']:>5d} s  {r['energy_kwh']:>7.1f} kWh  "
+            f"  {action_label(a):>5}: {r['steps']:>5d} s  {r['energy_kwh']:>7.1f} kWh  "
             f"sum_beta={r['disc_sum_beta']:>7.3f} (disc)  on_schedule={r['on_schedule']}"
         )
 
-    # eco target = slowest ON-SCHEDULE notch (lowest energy that still arrives by deadline)
+    # eco target = slowest ON-SCHEDULE target (lowest energy that still arrives by deadline)
     on_sched = [r for r in recs if r["on_schedule"]]
-    eco = min(on_sched, key=lambda r: r["notch"])  # lowest notch that is on-schedule
-    # the cheaper-but-late notch just below it (the basin the policy mode falls into)
-    below = [r for r in recs if r["notch"] < eco["notch"]]
-    rival = max(below, key=lambda r: r["notch"]) if below else None
+    eco = min(on_sched, key=lambda r: r["action"])  # slowest target that is on-schedule
+    # the cheaper-but-late target just below it (the basin the policy mode falls into)
+    below = [r for r in recs if r["action"] < eco["action"]]
+    rival = max(below, key=lambda r: r["action"]) if below else None
 
     # threshold w_P* where R(eco) overtakes R(rival): linear in w_P
     # R(eco;w) - R(rival;w) = (a_eco - a_rival) - w*(beta_eco - beta_rival) >= 0
@@ -162,104 +172,122 @@ def analyze_trip(trip: str):
         if d_beta < 0:
             wp_star = (a_riv - a_eco) / (-d_beta)  # > this, eco wins
 
-    # reward-optimal notch as a function of w_P, over a grid
+    # reward-optimal action as a function of w_P, over a grid
     wp_grid = np.linspace(0, 10, 1001)
-    argmax_notch = [max(recs, key=lambda r: reward_of(r, w))["notch"] for w in wp_grid]
+    argmax_action = [
+        max(recs, key=lambda r: reward_of(r, w))["action"] for w in wp_grid
+    ]
 
     os.makedirs(OUTDIR, exist_ok=True)
-    with open(os.path.join(OUTDIR, f"constant_notch_{trip}.csv"), "w", newline="") as f:
+    with open(
+        os.path.join(OUTDIR, f"constant_target_{trip}.csv"), "w", newline=""
+    ) as f:
         w = csv.DictWriter(f, fieldnames=list(recs[0].keys()))
         w.writeheader()
         w.writerows(recs)
 
     result = {
         "trip": trip,
-        "eco_notch": eco["notch"],
-        "rival_notch": (rival["notch"] if rival else None),
+        "eco_action": eco["action"],
+        "rival_action": (rival["action"] if rival else None),
         "wp_star": (round(wp_star, 3) if wp_star is not None else None),
         "records": recs,
         "wp_grid": wp_grid.tolist(),
-        "argmax_notch": argmax_notch,
+        "argmax_action": argmax_action,
     }
     print(
-        f"  eco target = notch {eco['notch']} ({eco['energy_kwh']:.1f} kWh, "
-        f"{eco['steps']} s);  rival below = notch {rival['notch'] if rival else None}"
+        f"  eco target = {action_label(eco['action'])} ({eco['energy_kwh']:.1f} kWh, "
+        f"{eco['steps']} s);  rival below = {action_label(rival['action']) if rival else None}"
     )
     print(
         f"  --> theoretical threshold  w_P* = {result['wp_star']}  "
-        f"(eco notch is reward-optimal for w_P >= w_P*)"
+        f"(eco target is reward-optimal for w_P >= w_P*)"
     )
     return result
 
 
 def plot(results: dict):
+    """One chart per trip: the constant target the reward prefers at each pace
+    weight, against the targets that arrive before the deadline.
+
+    Writes results/plots/reward_theory_<trip>.png (+ .pdf)."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    wp_max = 8.0
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.4))
-    for ax, trip in zip(axes, ["forward", "return"]):
-        res = results[trip]
-        recs = res["records"]
-        wp = np.linspace(0, wp_max, 400)
-        # y-window: focus on the schedule-feasible notches so the eco-vs-rival
-        # crossover near w_P* is visible (the timeout notch runs off the bottom).
-        on_sched = [r for r in recs if r["on_schedule"]]
-        hi = max(reward_of(r, 0.0) for r in recs)
-        lo = min(reward_of(r, wp_max) for r in on_sched)
-        span = hi - lo
-        for r in recs:
-            ys = [reward_of(r, w) for w in wp]
-            ax.plot(
-                wp,
-                ys,
-                lw=1.8 if r["notch"] == res["eco_notch"] else 1.2,
-                label=f"N{r['notch']}" + ("" if r["arrived"] else " (timeout)"),
+    blue, grey, green, ink = "#2a78d6", "#8a8984", "#1baf7a", "#1b1b19"
+    trip_names = {"forward": "Forward trip A→B", "return": "Return trip B→A"}
+    outdir = os.path.join(_REPO, "results", "plots")
+    os.makedirs(outdir, exist_ok=True)
+
+    for trip, res in results.items():
+        recs = {r["action"]: r for r in res["records"]}
+        wp = np.array(res["wp_grid"])
+        best = np.array(res["argmax_action"])
+        on_time = sorted(a for a, r in recs.items() if r["on_schedule"])
+        eco = res["eco_action"]
+        now = int(best[np.argmin(np.abs(wp - W_PACE))])  # what the current weight picks
+
+        # the finding, for the title: the pace-weight range where the eco target wins
+        eco_ws = wp[best == eco]
+        if not len(eco_ws):
+            finding = "the reward never picks an on-time target"
+        elif eco_ws.max() < wp.max():
+            finding = (
+                f"the reward picks the on-time {action_label(eco)} target "
+                f"for W_PACE {res['wp_star']:.2f} to {eco_ws.max():.2f}"
             )
-        ax.set_ylim(lo - 0.15 * span, hi + 0.10 * span)
-        if res["wp_star"] is not None and res["wp_star"] <= wp_max:
-            ax.axvline(res["wp_star"], color="k", ls=":", lw=1.5)
-            ax.annotate(
-                f"$w_P^*$={res['wp_star']:.2f}",
-                (res["wp_star"], lo),
-                fontsize=9,
-                xytext=(5, 14),
-                textcoords="offset points",
+        else:
+            finding = (
+                f"the reward picks the on-time {action_label(eco)} target "
+                f"only for W_PACE ≥ {res['wp_star']:.2f}"
             )
-        ax.axvline(2.0, color="red", ls="--", lw=1.2, alpha=0.8)
+
+        fig, ax = plt.subplots(figsize=(7.0, 3.4))
+        ax.axhspan(
+            min(on_time) - 0.45,
+            max(on_time) + 0.45,
+            color=green,
+            alpha=0.12,
+            lw=0,
+            label=f"targets that arrive before the {DEADLINE_STEPS:,} s deadline",
+        )
+        ax.step(wp, best, where="post", color=blue, lw=2)
+        ax.legend(loc="lower right", frameon=False, fontsize=8.5)
+        ax.axvline(W_PACE, color=grey, ls="--", lw=1.2)
+        ax.plot([W_PACE], [now], "o", color=blue, ms=7, zorder=3)
+        status = "on time" if recs[now]["on_schedule"] else "late"
         ax.annotate(
-            "chosen $w_P{=}2$",
-            (2.0, hi + 0.10 * span),
-            color="red",
-            fontsize=8.5,
-            va="top",
-            ha="center",
-            xytext=(0, -2),
+            f"now: W_PACE = {W_PACE:g} → {action_label(now)} ({status})",
+            (W_PACE, now),
+            xytext=(8, -30),
             textcoords="offset points",
+            fontsize=8.5,
+            color=ink,
         )
+        ax.set_yticks(sorted(recs))
+        ax.set_yticklabels([action_label(a) for a in sorted(recs)])
+        ax.set_ylim(min(recs) - 0.5, max(recs) + 0.5)
+        ax.set_xlim(0, wp.max())
+        ax.set_xlabel(
+            "pace weight W_PACE (penalty for falling behind the deadline pace)"
+        )
+        ax.set_ylabel("constant target the\nreward prefers")
         ax.set_title(
-            f"{trip.capitalize()} trip — eco notch N{res['eco_notch']} "
-            f"optimal for $w_P\\geq{res['wp_star']:.2f}$",
-            fontsize=10.5,
+            f"{trip_names[trip]}: {finding}",
+            loc="left",
+            fontsize=10,
+            fontweight="bold",
+            pad=8,
         )
-        ax.set_xlabel("pace weight $w_P$")
-        ax.set_ylabel("constant-notch return $R(n;w_P)$")
-        ax.legend(fontsize=8, ncol=2, loc="lower left", framealpha=0.95)
-        ax.grid(alpha=0.3)
-    fig.suptitle(
-        "Closed-form return of constant-notch policies: the eco notch is "
-        "reward-optimal across the whole sensible $w_P$ range",
-        fontsize=11.5,
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
-    primary = os.path.join(_REPO, "results", "plots")
-    os.makedirs(primary, exist_ok=True)
-    fig.savefig(
-        os.path.join(primary, "fig_reward_theory.png"), dpi=200, bbox_inches="tight"
-    )
-    plt.close(fig)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        ax.grid(axis="x", color="#e4e3df", lw=0.6)
+        name = os.path.join(outdir, f"reward_theory_{trip}")
+        fig.savefig(name + ".png", dpi=200, bbox_inches="tight")
+        fig.savefig(name + ".pdf", bbox_inches="tight")
+        plt.close(fig)
 
 
 def main():
@@ -278,10 +306,11 @@ def main():
     print("\n=== SUMMARY ===")
     for t, r in results.items():
         print(
-            f"{t:>8}: eco notch N{r['eco_notch']}, rival N{r['rival_notch']}, "
+            f"{t:>8}: eco target {action_label(r['eco_action'])}, "
+            f"rival {action_label(r['rival_action']) if r['rival_action'] is not None else None}, "
             f"w_P* = {r['wp_star']}  (current w_P=2)"
         )
-    print(f"\nWrote {OUTDIR}/ and fig_reward_theory.png")
+    print(f"\nWrote {OUTDIR}/ and results/plots/reward_theory_<trip>.png")
 
 
 if __name__ == "__main__":

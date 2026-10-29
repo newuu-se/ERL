@@ -30,6 +30,8 @@ checkpoints/
 logs/
 # baselines, profiles and plots, all written by rl/*.py
 /results/
+# NeTrainSim's own trainSummary / trajectory files (NETRAINSIM_OUTPUT_DIR)
+netrainsim-output/
 *.log
 
 # ---------------------------------------------------------------------------
